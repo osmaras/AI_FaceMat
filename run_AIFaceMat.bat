@@ -16,6 +16,9 @@ set "TMP=%UV_CACHE_BASE%\.uv-tmp"
 set "TEMP=%UV_CACHE_BASE%\.uv-tmp"
 set "UV_LINK_MODE=copy"
 
+set "SCRATCH_PORT=8080"
+set "SCRATCH_API_KEY="
+
 "C:\Users\oscar\.local\bin\uv.exe" run ^
 	--verbose ^
 	--default-index https://pypi.org/simple ^

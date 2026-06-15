@@ -29,6 +29,17 @@ $cacheDir = Read-Host "UV cache directory [$defaultCache]"
 if ([string]::IsNullOrWhiteSpace($cacheDir)) { $cacheDir = $defaultCache }
 
 # ────────────────────────────────────────────────────────────
+# 2b. Ask for Scratch REST API port and access key
+# ────────────────────────────────────────────────────────────
+Write-Host ""
+Write-Host "Assimilate Scratch REST API connection." -ForegroundColor DarkGray
+$defaultPort = "8080"
+$scratchPort = Read-Host "Scratch REST API port [$defaultPort]"
+if ([string]::IsNullOrWhiteSpace($scratchPort)) { $scratchPort = $defaultPort }
+
+$scratchApiKey = Read-Host "Scratch API access key (optional, press Enter to skip)"
+
+# ────────────────────────────────────────────────────────────
 # 3. Check / install uv
 # ────────────────────────────────────────────────────────────
 Write-Host ""
@@ -183,6 +194,9 @@ set "UV_CACHE_DIR=%UV_CACHE_BASE%\.uv-cache"
 set "TMP=%UV_CACHE_BASE%\.uv-tmp"
 set "TEMP=%UV_CACHE_BASE%\.uv-tmp"
 set "UV_LINK_MODE=copy"
+
+set "SCRATCH_PORT=$scratchPort"
+set "SCRATCH_API_KEY=$scratchApiKey"
 
 "$uvPath" run ^
 	--verbose ^

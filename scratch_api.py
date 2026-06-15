@@ -25,9 +25,13 @@ class ScratchAPI:
     Docs base: http://localhost:8080/APIV2
     """
 
-    def __init__(self, host="127.0.0.1", port=8080):
+    def __init__(self, host="127.0.0.1", port=None, api_key=None):
+        port = port or int(os.environ.get("SCRATCH_PORT", "8080"))
+        api_key = api_key or os.environ.get("SCRATCH_API_KEY", "")
         config = Configuration()
         config.host = f"http://{host}:{port}/APIV2"
+        if api_key:
+            config.api_key["Authorization"] = f"Bearer {api_key}"
         self.api_client = ApiClient(config)
         self.projects = assimilate_client.ProjectsApi(self.api_client)
         self.app = assimilate_client.ApplicationApi(self.api_client)
