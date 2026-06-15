@@ -73,7 +73,60 @@ else {
 }
 
 # ────────────────────────────────────────────────────────────
-# 4. Copy files to install directory
+# 4. Detect GPU and select CUDA / PyTorch versions
+# ────────────────────────────────────────────────────────────
+Write-Host ""
+$cudaVersion = "cu124"
+$torchVer = "2.5.1"
+$torchvisionVer = "0.20.1"
+$gpuName = "Unknown"
+$gpuComputeCap = "0.0"
+
+try {
+    $nvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+    if ($nvidiaSmi) {
+        $smiOutput = & nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader 2>&1
+        if ($smiOutput -and $smiOutput -notmatch "error") {
+            $parts = ($smiOutput | Select-Object -First 1) -split ","
+            $gpuName = $parts[0].Trim()
+            $gpuComputeCap = $parts[1].Trim()
+            $major = [int]($gpuComputeCap.Split(".")[0])
+
+            Write-Host "  GPU: $gpuName (compute capability $gpuComputeCap)" -ForegroundColor White
+
+            if ($major -ge 10) {
+                # Blackwell (sm_100+) requires CUDA 12.8+
+                $cudaVersion = "cu128"
+                $torchVer = "2.6.0"
+                $torchvisionVer = "0.21.0"
+                Write-Host "  → Blackwell detected, using CUDA 12.8 build" -ForegroundColor Yellow
+            }
+            else {
+                Write-Host "  → Using CUDA 12.4 build (compatible)" -ForegroundColor DarkGray
+            }
+        }
+        else {
+            Write-Host "  ⚠ Could not query GPU, defaulting to CUDA 12.4" -ForegroundColor Yellow
+        }
+    }
+    else {
+        Write-Host "  ⚠ nvidia-smi not found, defaulting to CUDA 12.4" -ForegroundColor Yellow
+    }
+}
+catch {
+    Write-Host "  ⚠ GPU detection failed: $_" -ForegroundColor Yellow
+    Write-Host "  Defaulting to CUDA 12.4" -ForegroundColor DarkGray
+}
+
+$torchSpec = "torch==$torchVer+$cudaVersion"
+$torchvisionSpec = "torchvision==$torchvisionVer+$cudaVersion"
+$pytorchIndex = "https://download.pytorch.org/whl/$cudaVersion"
+
+Write-Host "  PyTorch: $torchSpec" -ForegroundColor White
+Write-Host "  Index:   $pytorchIndex" -ForegroundColor White
+
+# ────────────────────────────────────────────────────────────
+# 5. Copy files to install directory
 # ────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "Installing to: $installDir" -ForegroundColor Cyan
@@ -134,7 +187,7 @@ set "UV_LINK_MODE=copy"
 "$uvPath" run ^
 	--verbose ^
 	--default-index https://pypi.org/simple ^
-	--index https://download.pytorch.org/whl/cu124 ^
+	--index $pytorchIndex ^
 	--index-strategy unsafe-best-match ^
 	AI_FaceMat.py %*
 pause
@@ -145,7 +198,23 @@ Set-Content -Path $batPath -Value $batContent -Encoding UTF8
 Write-Host "  ✓ run_AIFaceMat.bat configured" -ForegroundColor Green
 
 # ────────────────────────────────────────────────────────────
-# 6. Patch Ai_Facemat.acc with correct cmdline path
+# 6. Patch AI_FaceMat.py inline metadata with correct torch/torchvision
+# ────────────────────────────────────────────────────────────
+Write-Host "Patching PyTorch versions in script..." -ForegroundColor Cyan
+
+$scriptPath = Join-Path $installDir "AI_FaceMat.py"
+if (Test-Path $scriptPath) {
+    $scriptContent = Get-Content $scriptPath -Raw
+    # Replace pinned torch version
+    $scriptContent = $scriptContent -replace 'torch==[\d.]+\+cu\d+', $torchSpec
+    # Replace pinned torchvision version
+    $scriptContent = $scriptContent -replace 'torchvision==[\d.]+\+cu\d+', $torchvisionSpec
+    Set-Content -Path $scriptPath -Value $scriptContent -Encoding UTF8
+    Write-Host "  ✓ AI_FaceMat.py patched: $torchSpec, $torchvisionSpec" -ForegroundColor Green
+}
+
+# ────────────────────────────────────────────────────────────
+# 7. Patch Ai_Facemat.acc with correct cmdline path
 # ────────────────────────────────────────────────────────────
 Write-Host "Configuring Scratch custom command..." -ForegroundColor Cyan
 
@@ -184,7 +253,7 @@ Set-Content -Path $accPath -Value $accContent -Encoding UTF8
 Write-Host "  ✓ Ai_Facemat.acc configured" -ForegroundColor Green
 
 # ────────────────────────────────────────────────────────────
-# 7. Create uninstaller
+# 8. Create uninstaller
 # ────────────────────────────────────────────────────────────
 Write-Host "Creating uninstaller..." -ForegroundColor Cyan
 
@@ -241,6 +310,8 @@ Write-Host ""
 Write-Host "  Install dir : $installDir" -ForegroundColor White
 Write-Host "  UV cache    : $cacheDir" -ForegroundColor White
 Write-Host "  uv binary   : $uvPath" -ForegroundColor White
+Write-Host "  GPU         : $gpuName (sm_$gpuComputeCap)" -ForegroundColor White
+Write-Host "  PyTorch     : $torchSpec" -ForegroundColor White
 Write-Host ""
 Write-Host "  To load in Scratch:" -ForegroundColor Cyan
 Write-Host "    Menu → Custom Commands → Load → $installDir\Ai_Facemat.acc" -ForegroundColor White
