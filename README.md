@@ -20,9 +20,8 @@ An AI-powered pipeline that automatically generates per-feature face mattes (Ski
 
 ### Prerequisites
 
-- **Windows** with NVIDIA GPU (CUDA 12.4+)
+- **Windows 10/11** with NVIDIA GPU (CUDA 12.4+)
 - **Assimilate Scratch** running locally (`http://127.0.0.1:8080`)
-- [uv](https://docs.astral.sh/uv/) package manager (handles Python and all dependencies automatically)
 
 ### Steps
 
@@ -32,21 +31,33 @@ An AI-powered pipeline that automatically generates per-feature face mattes (Ski
 git clone https://github.com/osmaras/AI_FaceMat.git V:\PROGRAMING\Scratch-Scripts\AI_FaceMat
 ```
 
-2. **Verify uv is installed**
+2. **Run the installer**
 
-```bat
-uv --version
+```powershell
+powershell -File V:\PROGRAMING\Scratch-Scripts\AI_FaceMat\install.ps1
 ```
 
-If not installed, follow the [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/).
+The installer will:
+- Ask where to install (default: the cloned directory)
+- Ask for a UV cache location (use a fast SSD like `G:\` if available)
+- Check if [uv](https://docs.astral.sh/uv/) is installed — if not, install it automatically
+- Patch `run_AIFaceMat.bat` with the correct paths and UV binary location
+- Patch `Ai_Facemat.acc` with the correct batch file path for Scratch
+- Generate an `uninstall.ps1` for clean removal
 
-3. **First run** — uv will automatically install Python 3.10+, PyTorch with CUDA, and all AI model dependencies:
+3. **Load the Custom Command in Scratch** (see [Configuration](#configuration) below)
 
-```bat
-run_AIFaceMat.bat -P1 1 -P2 y -P3 0
-```
+4. **First run** — uv will automatically install Python 3.10+, PyTorch with CUDA, and all AI model dependencies
 
 > On first run, model checkpoints (~1.2 GB total) are downloaded from HuggingFace and cached in `~/.cache/huggingface/hub/`. Subsequent runs use the cache.
+
+### Uninstall
+
+```powershell
+powershell -File <install_dir>\uninstall.ps1
+```
+
+The uninstaller asks before removing the install directory and UV cache (models + environments). HuggingFace checkpoint cache is preserved separately.
 
 ## Configuration
 
@@ -55,17 +66,11 @@ run_AIFaceMat.bat -P1 1 -P2 y -P3 0
 The pipeline runs as a **Custom Command** inside Scratch. Custom Commands extend the application with user-defined scripts and actions — they appear as buttons in the construct or player menus, and all user input values are passed to the script through command-line parameters. Commands can be saved and loaded as standalone `.acc` files.
 
 1. Open **Scratch** and load your project
-2. Go to **Menu → Custom Commands → Load**
-3. Browse to `V:\PROGRAMING\Scratch-Scripts\AI_FaceMat\Ai_Facemat.acc`
+2. Go to **System Settings → Custom Commands → Import**
+3. Browse to the `Ai_Facemat.acc` file in your install directory
 4. The **Ai_FaceMat** button will appear in the player right-click menu (only when a shot is selected)
 
-### Customize the Command Path
-
-If you installed the repository to a different location, edit the `<cmdline>` path in `Ai_Facemat.acc`:
-
-```xml
-<cmdline>V:\YOUR\PATH\TO\AI_FaceMat\run_AIFaceMat.bat</cmdline>
-```
+> If you ran `install.ps1`, the `.acc` file is already patched with the correct paths. If you moved the installation, re-run the installer or manually edit the `<cmdline>` path in `Ai_Facemat.acc`.
 
 ### Input Form
 
@@ -149,6 +154,28 @@ The custom command presents three inputs when triggered. All values are passed t
 ### Stage 5 — Cleanup & Notifications
 - Optionally purges rendered source cache
 - Appends a pipeline completion note to the shot's metadata
+
+## Project Structure
+
+| File | Description |
+|------|-------------|
+| `AI_FaceMat.py` | Main pipeline script (SegFace + SAM2 + Scratch integration) |
+| `scratch_api.py` | Reusable Scratch REST API wrapper — importable from other scripts |
+| `run_AIFaceMat.bat` | Batch launcher (configured by installer) |
+| `Ai_Facemat.acc` | Scratch Custom Command definition (load in Scratch via System Settings → Custom Commands → Import) |
+| `install.ps1` | Interactive installer (uv detection, path config, .acc/.bat patching) |
+
+### Reusing the Scratch API
+
+`scratch_api.py` can be imported independently in any Python script that needs to interact with Scratch:
+
+```python
+from scratch_api import ScratchAPI
+
+scratch = ScratchAPI()
+selection, shot_data = scratch.get_selected_shot()
+print(f"Shot: {shot_data.name}, Length: {shot_data.length}")
+```
 
 ## Dependencies
 
