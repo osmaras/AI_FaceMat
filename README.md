@@ -92,6 +92,24 @@ The custom command presents three inputs when triggered. All values are passed t
 | **Timeline destination** | Dropdown | `Add layer` / `Add version` | `-P3` (0 / 1) |
 | **SegFace Model** | Dropdown | `ConvNeXt CelebA` / `SwinB CelebA` / `SwinV2B CelebA` / `SwinB LaPa` | `-P4` (0 / 1 / 2 / 3) |
 
+### Scratch REST API Connection
+
+The pipeline communicates with Scratch via its REST API. The connection settings are passed as environment variables in `run_AIFaceMat.bat`:
+
+```bat
+set "SCRATCH_PORT=8080"
+set "SCRATCH_API_KEY="
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SCRATCH_PORT` | `8080` | REST API port configured in Scratch |
+| `SCRATCH_API_KEY` | *(empty)* | Optional access key for authenticated Scratch instances |
+
+> **If you change the REST API port in Scratch** (System Settings → REST API → Port), update `SCRATCH_PORT` in `run_AIFaceMat.bat` to match. If the port doesn't match, the pipeline will fail to connect.
+
+The installer prompts for these values during setup. To change them later, edit `run_AIFaceMat.bat` directly or re-run `install.ps1`.
+
 ## Usage
 
 ### Basic Workflow
