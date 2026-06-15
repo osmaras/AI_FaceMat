@@ -32,15 +32,54 @@ from huggingface_hub import hf_hub_download
 # Uses huggingface_hub which checks ~/.cache/huggingface/hub first (instant
 # if already downloaded), then downloads only on cache miss.
 CHECKPOINTS = {
-    "segface": {
+    "segface_convnext": {
         "repo_id": "kartiknarayan/SegFace",
         "filename": "convnext_celeba_512/model_299.pt",
         "backbone": "segface_celeb",
         "model": "convnext_base",
+        "dataset": "celeba",
+    },
+    "segface_swinb": {
+        "repo_id": "kartiknarayan/SegFace",
+        "filename": "swinb_celeba_512/model_299.pt",
+        "backbone": "segface_celeb",
+        "model": "swin_base",
+        "dataset": "celeba",
+    },
+    "segface_swinv2b": {
+        "repo_id": "kartiknarayan/SegFace",
+        "filename": "swinv2b_celeba_512/model_299.pt",
+        "backbone": "segface_celeb",
+        "model": "swinv2_base",
+        "dataset": "celeba",
+    },
+    "segface_swinb_lapa": {
+        "repo_id": "kartiknarayan/SegFace",
+        "filename": "swinb_lapa_512/model_299.pt",
+        "backbone": "segface_lapa",
+        "model": "swin_base",
+        "dataset": "lapa",
     },
     "sam2": {
         "repo_id": "facebook/sam2.1-hiera-large",
         "filename": "sam2.1_hiera_large.pt",
+    },
+}
+
+# Per-dataset class index mappings for feature extraction
+# CelebAMask-HQ (19 classes): background, neck, skin, cloth, l_ear, r_ear,
+#   l_brow, r_brow, l_eye, r_eye, nose, mouth, l_lip, u_lip, hair, ...
+# LaPa (11 classes): background, face, lb, rb, le, re, nose, ul, im, ll, hair
+FEATURE_CLASS_MAP = {
+    "celeba": {
+        "Skin": lambda m: (m == 2).astype(np.uint8) * 255,
+        "Lips": lambda m: np.isin(m, [12, 13]).astype(np.uint8) * 255,
+        "Eyes": lambda m: np.isin(m, [8, 9]).astype(np.uint8) * 255,
+    },
+    "lapa": {
+        "Skin": lambda m: (m == 1).astype(np.uint8) * 255,   # face region
+        "Lips": lambda m: np.isin(m, [7, 9]).astype(np.uint8) * 255,  # upper lip + lower lip
+        "Eyes": lambda m: np.isin(m, [4, 5]).astype(np.uint8) * 255,  # left eye + right eye
     },
 }
 
@@ -147,26 +186,30 @@ def async_write_image(file_path, image_data, is_png=True):
 # ==============================================================================
 def parse_args():
     parser = argparse.ArgumentParser(description="AI Face Matte Pipeline for Assimilate Scratch")
-    # Scratch UI passes: -P1 <mode> -P2 <cleanup> -P3 <target>
+    # Scratch UI passes: -P1 <mode> -P2 <cleanup> -P3 <target> -P4 <model>
     parser.add_argument("-P1", type=int, choices=[0, 1], required=True,
                         help="Output mode: 0=grayscale (per-feature mattes), 1=color (combined multicolor)")
     parser.add_argument("-P2", type=str, choices=["y", "n"], required=True,
                         help="Auto-clean rendered cache: y=yes, n=no")
     parser.add_argument("-P3", type=int, choices=[0, 1], default=0,
                         help="Timeline destination: 0=layer, 1=version")
+    parser.add_argument("-P4", type=int, choices=[0, 1, 2, 3], default=0,
+                        help="SegFace model: 0=ConvNeXt-CelebA, 1=SwinB-CelebA, 2=SwinV2B-CelebA, 3=SwinB-LaPa")
     args = parser.parse_args()
 
     # Map Scratch UI parameters to internal names used throughout the pipeline
     args.mode = "color" if args.P1 == 1 else "grayscale"
     args.auto_clean = (args.P2 == "y")
     args.target = "version" if args.P3 == 1 else "layer"
+    segface_models = ["segface_convnext", "segface_swinb", "segface_swinv2b", "segface_swinb_lapa"]
+    args.segface_model = segface_models[args.P4]
 
     return args
 
 def main():
     args = parse_args()
     scratch = ScratchAPI()
-    print(f"🛰️ API Bridge Engaged | Mode: {args.mode.upper()} | Target: {args.target.upper()}")
+    print(f"🛰️ API Bridge Engaged | Mode: {args.mode.upper()} | Target: {args.target.upper()} | Model: {args.segface_model}")
 
     # ----------------------------------------------------------------------
     # STAGE 1: METADATA & DATA PATH EVALUATION
@@ -258,8 +301,9 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Auto-resolve checkpoints (HF cache hit = instant, miss = download once)
-    segface_spec = CHECKPOINTS["segface"]
-    segface_ckpt = ensure_checkpoint("segface")
+    segface_spec = CHECKPOINTS[args.segface_model]
+    segface_ckpt = ensure_checkpoint(args.segface_model)
+    print(f"  ↳ Using SegFace model: {args.segface_model} ({segface_spec['model']})")
     face_parser = SegFaceParser(
         checkpoint=segface_ckpt,
         device=device,
@@ -271,18 +315,18 @@ def main():
     h, w, _ = sample_img.shape
 
     # --- Keyframe Seeding: SegFace semantic parsing on frame 0 ---
-    # CelebAMask-HQ indices: 2=skin, 8=l_eye, 9=r_eye, 12=l_lip, 13=u_lip
     print("🎭 Running SegFace semantic parsing on frame 0...")
     parsed_semantic_map = face_parser.parse_image(sample_img)
+
+    # Map semantic classes to features based on the dataset
+    dataset = segface_spec.get("dataset", "celeba")
+    class_map = FEATURE_CLASS_MAP[dataset]
+    print(f"  ↳ Dataset: {dataset} ({len(class_map)} features)")
 
     # Save per-feature binary masks as PNGs
     mask_dir = os.path.join(PIPELINE_WORKSPACE, "masks")
     os.makedirs(mask_dir, exist_ok=True)
-    feature_masks = {
-        "Skin": (parsed_semantic_map == 2).astype(np.uint8) * 255,
-        "Lips": np.isin(parsed_semantic_map, [12, 13]).astype(np.uint8) * 255,
-        "Eyes": np.isin(parsed_semantic_map, [8, 9]).astype(np.uint8) * 255,
-    }
+    feature_masks = {name: fn(parsed_semantic_map) for name, fn in class_map.items()}
     for name, mask_arr in feature_masks.items():
         cv2.imwrite(os.path.join(mask_dir, f"{name.lower()}.png"), mask_arr)
         print(f"    {name}: {np.count_nonzero(mask_arr)} nonzero / {mask_arr.size} total pixels")

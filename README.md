@@ -81,6 +81,7 @@ The custom command presents three inputs when triggered. All values are passed t
 | **Processing Mode** | Dropdown | `grayscale` / `color` | `-P1` (0 / 1) |
 | **Clean up cache** | Yes/No | Checkbox | `-P2` (y / n) |
 | **Timeline destination** | Dropdown | `Add layer` / `Add version` | `-P3` (0 / 1) |
+| **SegFace Model** | Dropdown | `ConvNeXt CelebA` / `SwinB CelebA` / `SwinV2B CelebA` / `SwinB LaPa` | `-P4` (0 / 1 / 2 / 3) |
 
 ## Usage
 
@@ -92,6 +93,7 @@ The custom command presents three inputs when triggered. All values are passed t
    - **Processing Mode**: `color` for a single multicolor matte, `grayscale` for individual per-feature mattes
    - **Clean up cache**: `yes` to remove rendered frames after completion
    - **Timeline destination**: `Add layer` to overlay on the existing shot, `Add version` to create a new shot entry
+   - **SegFace Model**: `ConvNeXt` for highest accuracy, `SwinV2B` for best F1 score, `SwinB` for speed, `SwinB LaPa` for alternative dataset quality
 4. **Click OK** — the pipeline renders frames, runs AI analysis, and imports mattes back into Scratch
 
 ### Output Modes
@@ -190,12 +192,27 @@ print(f"Shot: {shot_data.name}, Length: {shot_data.length}")
 
 Auto-downloaded on first run, cached in `~/.cache/huggingface/hub/`:
 
-| Model | HF Repo | File | Size |
-|-------|---------|------|------|
-| SegFace | `kartiknarayan/SegFace` | `convnext_celeba_512/model_299.pt` | ~350 MB |
-| SAM 2.1 | `facebook/sam2.1-hiera-large` | `sam2.1_hiera_large.pt` | ~856 MB |
+| `-P4` | Model | Backbone | Dataset | HF File | Size |
+|-------|-------|----------|---------|---------|------|
+| 0 | ConvNeXt CelebA | `convnext_base` | CelebAMask-HQ | `convnext_celeba_512/model_299.pt` | ~350 MB |
+| 1 | SwinB CelebA | `swin_base` | CelebAMask-HQ | `swinb_celeba_512/model_299.pt` | ~350 MB |
+| 2 | SwinV2B CelebA | `swinv2_base` | CelebAMask-HQ | `swinv2b_celeba_512/model_299.pt` | ~350 MB |
+| 3 | SwinB LaPa | `swin_base` | LaPa | `swinb_lapa_512/model_299.pt` | ~350 MB |
+| — | SAM 2.1 | — | — | `sam2.1_hiera_large.pt` | ~856 MB |
 
-## SegFace Class Mapping (CelebAMask-HQ)
+All SegFace checkpoints are from `kartiknarayan/SegFace`. SAM 2.1 is from `facebook/sam2.1-hiera-large`.
+
+**Model selection guide:**
+- **ConvNeXt CelebA** (`-P4 0`): Highest accuracy across all classes, especially long-tail features (earrings, eyeglasses, necklaces). Slower inference.
+- **SwinB CelebA** (`-P4 1`): Faster inference with Swin Transformer backbone. Slightly lower accuracy on rare classes.
+- **SwinV2B CelebA** (`-P4 2`): SwinV2 backbone — best overall F1 score on CelebAMask-HQ (88.73). Good balance of speed and accuracy.
+- **SwinB LaPa** (`-P4 3`): Trained on the LaPa dataset which has cleaner face boundaries and more consistent annotations. Uses different class indices (11 classes vs 19). Good alternative if CelebA results are unsatisfactory.
+
+## SegFace Class Mapping
+
+The pipeline maps SegFace's semantic output to three features (Skin, Lips, Eyes). The class indices differ between datasets:
+
+### CelebAMask-HQ (19 classes) — used by ConvNeXt, SwinB, SwinV2B
 
 | Index | Class | Used | | Index | Class | Used |
 |-------|-------|------|-|-------|-------|------|
@@ -209,3 +226,40 @@ Auto-downloaded on first run, cached in `~/.cache/huggingface/hub/`:
 | 7 | Right brow | — | | 17 | Earring | — |
 | 8 | **Left eye** | ✓ | | 18 | Necklace | — |
 | 9 | **Right eye** | ✓ | | | | |
+
+### LaPa (11 classes) — used by SwinB LaPa
+
+| Index | Class | Used | | Index | Class | Used |
+|-------|-------|------|-|-------|-------|------|
+| 0 | Background | — | | 6 | Nose | — |
+| 1 | **Face** | ✓ (Skin) | | 7 | **Upper lip** | ✓ |
+| 2 | Left brow | — | | 8 | Inner mouth | — |
+| 3 | Right brow | — | | 9 | **Lower lip** | ✓ |
+| 4 | **Left eye** | ✓ | | 10 | Hair | — |
+| 5 | **Right eye** | ✓ | | | | |
+
+### Adding Custom Feature Groups
+
+To extract additional face features (e.g., Hair, Nose, Eyeglasses), edit the `feature_masks` dictionary in `AI_FaceMat.py` (Stage 3 section):
+
+```python
+feature_masks = {
+    "Skin": (parsed_semantic_map == 2).astype(np.uint8) * 255,
+    "Lips": np.isin(parsed_semantic_map, [12, 13]).astype(np.uint8) * 255,
+    "Eyes": np.isin(parsed_semantic_map, [8, 9]).astype(np.uint8) * 255,
+    # Add more features here:
+    "Hair": (parsed_semantic_map == 14).astype(np.uint8) * 255,
+    "Nose": (parsed_semantic_map == 10).astype(np.uint8) * 255,
+    "Eyeglasses": (parsed_semantic_map == 15).astype(np.uint8) * 255,
+}
+```
+
+Then add the new feature names to the `FEATURES` list:
+
+```python
+FEATURES = ["Skin", "Lips", "Eyes", "Hair", "Nose", "Eyeglasses"]
+```
+
+For multi-class features that span multiple indices (like Lips = 12 + 13), use `np.isin()`. For single-class features, use `==`.
+
+The SAM2 refinement and video tracking will automatically pick up the new features — no other code changes needed.
