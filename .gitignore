@@ -1,0 +1,30 @@
+# Temp clone directories from fork operations
+.tmp-*/
+
+# Segface fork packaging files (not part of the app)
+segface-fork-files/
+
+# API docs (reference only, not part of the app)
+docs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Model weights (downloaded at runtime)
+weights/
+
+# Runtime cache and rendered frames
+*.png
+*.jpg
+*.dpx
+*.tif
+*.tiff
+*.exr
+!run_AIFaceMat.bat
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
