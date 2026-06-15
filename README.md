@@ -2,8 +2,6 @@
 
 An AI-powered pipeline that automatically generates per-feature face mattes (Skin, Lips, Eyes) from a selected shot in Assimilate Scratch, and loads them back as layers or versions for downstream compositing.
 
-## Pipeline Overview
-
 ```
 ┌─────────────┐    ┌──────────────────┐    ┌─────────────────┐    ┌──────────────────┐
 │   Scratch    │───▶│  Render Frames   │───▶│  AI Analysis     │───▶│  Import Mattes   │
@@ -18,88 +16,98 @@ An AI-powered pipeline that automatically generates per-feature face mattes (Ski
                                     └─────────────────────┘
 ```
 
-## Quick Start
+## Installation
 
 ### Prerequisites
-- **Windows** with NVIDIA GPU (CUDA)
-- **Assimilate Scratch** running locally (`http://127.0.0.1:8080`)
-- **Python 3.10+** with [uv](https://docs.astral.sh/uv/) package manager
 
-### Launch via Batch File
+- **Windows** with NVIDIA GPU (CUDA 12.4+)
+- **Assimilate Scratch** running locally (`http://127.0.0.1:8080`)
+- [uv](https://docs.astral.sh/uv/) package manager (handles Python and all dependencies automatically)
+
+### Steps
+
+1. **Clone the repository**
+
+```bat
+git clone https://github.com/osmaras/AI_FaceMat.git V:\PROGRAMING\Scratch-Scripts\AI_FaceMat
+```
+
+2. **Verify uv is installed**
+
+```bat
+uv --version
+```
+
+If not installed, follow the [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/).
+
+3. **First run** — uv will automatically install Python 3.10+, PyTorch with CUDA, and all AI model dependencies:
 
 ```bat
 run_AIFaceMat.bat -P1 1 -P2 y -P3 0
 ```
 
-### Launch Directly
+> On first run, model checkpoints (~1.2 GB total) are downloaded from HuggingFace and cached in `~/.cache/huggingface/hub/`. Subsequent runs use the cache.
 
-```bash
-uv run AI_FaceMat.py -P1 1 -P2 y -P3 0
-```
+## Configuration
 
-### Launch from Scratch Custom Button
+### Load the Custom Command in Scratch
 
-To call the pipeline from within Scratch, create a custom command button in the Scratch commands configuration. Add the following XML block to your Scratch `commands.xml` file (typically located in the Scratch user data directory):
+The pipeline runs as a **Custom Command** inside Scratch. Custom Commands extend the application with user-defined scripts and actions — they appear as buttons in the construct or player menus, and all user input values are passed to the script through command-line parameters. Commands can be saved and loaded as standalone `.acc` files.
+
+1. Open **Scratch** and load your project
+2. Go to **Menu → Custom Commands → Load**
+3. Browse to `V:\PROGRAMING\Scratch-Scripts\AI_FaceMat\Ai_Facemat.acc`
+4. The **Ai_FaceMat** button will appear in the player right-click menu (only when a shot is selected)
+
+### Customize the Command Path
+
+If you installed the repository to a different location, edit the `<cmdline>` path in `Ai_Facemat.acc`:
 
 ```xml
-<command uuid="072206de-9b40-40c3-9ca4-a7ab72d158ab" type="app" blocking="N"
-         minimize_on_exe="N" player_menu="Y" shot_selection="Y">
-    <title>Ai_FaceMat</title>
-    <cmdline>V:\PROGRAMING\Scratch-Scripts\AI_FaceMat\run_AIFaceMat.bat</cmdline>
-    <inputs>
-        <input uuid="072206de-9b40-40c3-9ca4-a7ab72d158ab" type="3" store="0">
-            <label>Processing Mode</label>
-            <value>grayscale,color</value>
-        </input>
-        <input uuid="072206de-9b40-40c3-9ca4-a7ab72d158ab" type="5" store="0">
-            <label>Clean up cache</label>
-            <value>yes</value>
-        </input>
-        <input uuid="072206de-9b40-40c3-9ca4-a7ab72d158ab" type="3" store="0">
-            <label>Timeline destination</label>
-            <value>Add layer,Add version</value>
-        </input>
-    </inputs>
-</command>
+<cmdline>V:\YOUR\PATH\TO\AI_FaceMat\run_AIFaceMat.bat</cmdline>
 ```
 
-**Command attributes:**
-| Attribute | Value | Meaning |
-|-----------|-------|---------|
-| `type="app"` | — | Launches an external application |
-| `blocking="N"` | — | Scratch UI remains responsive during execution |
-| `shot_selection="Y"` | — | Requires a shot to be selected in the timeline |
-| `player_menu="Y"` | — | Appears in the player right-click menu |
+### Input Form
 
-**Input mapping to script parameters:**
-| Input | Scratch type | UI element | Maps to |
-|-------|-------------|------------|---------|
-| Processing Mode | `type="3"` (dropdown) | `grayscale` / `color` | `-P1` (`0` / `1`) |
-| Clean up cache | `type="5"` (checkbox) | Checked = yes | `-P2` (`y` / `n`) |
-| Timeline destination | `type="3"` (dropdown) | `Add layer` / `Add version` | `-P3` (`0` / `1`) |
+The custom command presents three inputs when triggered. All values are passed to the script through command-line parameters:
 
-> **Note:** Update the `<cmdline>` path to match your local installation directory. The UUID values should be unique — generate new ones if needed.
+| Input | Type | Options | Script Parameter |
+|-------|------|---------|-----------------|
+| **Processing Mode** | Dropdown | `grayscale` / `color` | `-P1` (0 / 1) |
+| **Clean up cache** | Yes/No | Checkbox | `-P2` (y / n) |
+| **Timeline destination** | Dropdown | `Add layer` / `Add version` | `-P3` (0 / 1) |
 
-## Parameters
+## Usage
 
-| Param | Values | Description |
-|-------|--------|-------------|
-| `-P1` | `0` = grayscale, `1` = color | **Output mode**: grayscale produces per-feature matte passes (Skin/Lips/Eyes as separate layers); color combines them into a single multicolor canvas (B=Skin, G=Eyes, R=Lips) |
-| `-P2` | `y` / `n` | **Auto-clean**: removes rendered source cache after completion |
-| `-P3` | `0` = layer, `1` = version | **Timeline destination**: layer adds matte overlays on the existing shot; version creates new shot entries |
+### Basic Workflow
 
-### Common Recipes
+1. **Select a shot** in the Scratch timeline (the button only appears when a shot is selected)
+2. **Right-click** the player → select **Ai_FaceMat**
+3. **Choose options** in the input form:
+   - **Processing Mode**: `color` for a single multicolor matte, `grayscale` for individual per-feature mattes
+   - **Clean up cache**: `yes` to remove rendered frames after completion
+   - **Timeline destination**: `Add layer` to overlay on the existing shot, `Add version` to create a new shot entry
+4. **Click OK** — the pipeline renders frames, runs AI analysis, and imports mattes back into Scratch
 
-```bat
-:: Color multicolor mattes as layers
-run_AIFaceMat.bat -P1 1 -P2 y -P3 0
+### Output Modes
 
-:: Grayscale per-feature layers
-run_AIFaceMat.bat -P1 0 -P2 y -P3 0
+| Mode | Description | Scratch Result |
+|------|-------------|----------------|
+| **Color** | Single multicolor canvas (B=Skin, G=Eyes, R=Lips) | One matte layer/shot |
+| **Grayscale** | Individual binary masks per feature | Three matte layers/shots (Skin, Lips, Eyes) |
 
-:: Color mattes as independent versions
-run_AIFaceMat.bat -P1 1 -P2 n -P3 1
-```
+### Timeline Destinations
+
+| Destination | Description |
+|-------------|-------------|
+| **Add layer** | Creates a matte layer on the existing shot with correct slip offset for timeline alignment. Source timecode, fps, and reel_id are conformed to the matte. |
+| **Add version** | Creates a new shot entry in the Scratch library with source metadata (timecode, fps, reel_id, clip name). |
+
+### Cache Behavior
+
+- Rendered source frames are cached in the project's cache directory
+- Subsequent runs on the same shot skip the render pass if cached frames exist
+- Enable **Clean up cache** to reclaim disk space after completion
 
 ## Pipeline Stages
 
@@ -110,138 +118,67 @@ run_AIFaceMat.bat -P1 1 -P2 n -P3 1
 - Calculates the trimmed timecode for matte conformance
 
 ### Stage 2 — Frame Rendering
-- Renders the shot's trimmed frame range to disk via Scratch's Snapshot API (`POST /application/tools/image`)
+- Renders the shot's trimmed frame range to disk via Scratch's Snapshot API
 - Uses the timeline slot length for frame count, respecting in/out handles
 - Caches rendered frames — skips re-rendering if cached frames already exist
 
 ### Stage 3 — AI Analysis
 
-#### 3a. SegFace Semantic Parsing
+#### SegFace Semantic Parsing
 - Runs [SegFace](https://github.com/Kartik-3004/SegFace) (ConvNeXt backbone) on frame 0
-- Produces a 19-class face segmentation map (CelebAMask-HQ classes)
-- Extracts per-feature binary masks:
-  - **Skin** → class index 2
-  - **Lips** → class indices 12, 13 (lower lip, upper lip)
-  - **Eyes** → class indices 8, 9 (left eye, right eye)
+- Produces a 19-class face segmentation map (CelebAMask-HQ)
+- Extracts per-feature binary masks (Skin, Lips, Eyes)
 
-#### 3b. SAM2 Image Predictor Refinement
-- Refines SegFace's coarse masks using [SAM 2.1](https://github.com/facebookresearch/sam2) image predictor with box prompts
-- Each feature is refined independently with SAM2's boundary-aware decoder
-- **Distance-field edge boosting** for thin features (Eyes, Lips):
-  - Computes Euclidean distance transform from each pixel to the nearest background pixel
-  - Applies exponential weight boost at mask edges (up to 2.5× for perimeter pixels)
-  - Prevents thin features from being swallowed by neighboring classes during boundary conflicts
+#### SAM2 Image Predictor Refinement
+- Refines SegFace's coarse masks using [SAM 2.1](https://github.com/facebookresearch/sam2) with box prompts
+- **Distance-field edge boosting** for thin features (Eyes, Lips): prevents them from being swallowed by neighboring classes during boundary conflicts
 
-#### 3c. SAM2 Video Tracking
-- Runs [SAM 2.1](https://github.com/facebookresearch/sam2) video predictor with refined masks as seed prompts
+#### SAM2 Video Tracking
+- Runs SAM 2.1 video predictor with refined masks as seed prompts
 - `propagate_in_video` tracks all 3 features simultaneously through the shot
 - Produces **binary masks** per frame
-- Converts rendered PNGs to JPEGs (SAM2's frame loader requirement)
-- Writes per-feature matte sequences to disk with diagnostic validation
 
-#### 3d. Color Combine (color mode only)
-- Reads per-feature alpha frames
-- Composites into a multicolor canvas:
-  - **Blue channel** = Skin
-  - **Green channel** = Eyes
-  - **Red channel** = Lips
+#### Color Combine (color mode only)
+- Composites per-feature alphas into a multicolor canvas
 
 ### Stage 4 — Conformance
-- Imports matte sequences back into Scratch
-- **Layer mode** (`-P3 0`): Creates a matte layer on the existing shot with:
-  - Correct slip offset for timeline alignment
-  - Source timecode, fps, and reel_id conformed to the matte shot
-- **Version mode** (`-P3 1`): Creates a new shot entry with source metadata
-- Matte frame numbering aligns with the shot's trimmed range
+- Imports matte sequences back into Scratch as layers or versions
+- Conforms source metadata (timecode, fps, reel_id) onto matte shots
+- Aligns matte frame numbering with the shot's trimmed range
 
 ### Stage 5 — Cleanup & Notifications
-- Optionally purges rendered source cache (`-P2 y`)
+- Optionally purges rendered source cache
 - Appends a pipeline completion note to the shot's metadata
 
 ## Dependencies
 
 | Package | Source | Purpose |
 |---------|--------|---------|
-| SegFace | [osmaras/SegFace](https://github.com/osmaras/SegFace) (fork) | Face semantic segmentation (ConvNeXt backbone) |
+| SegFace | [osmaras/SegFace](https://github.com/osmaras/SegFace) | Face semantic segmentation (ConvNeXt backbone) |
 | SAM 2 | [facebookresearch/sam2](https://github.com/facebookresearch/sam2) | Video object tracking + image predictor refinement |
 | assimilate_client | [Assimilate-Inc/Assimilate-REST](https://github.com/Assimilate-Inc/Assimilate-REST) | Scratch REST API SDK |
 | huggingface_hub | PyPI | Model checkpoint caching |
 
 ### Model Checkpoints
 
-Checkpoints are auto-downloaded on first run and cached in `~/.cache/huggingface/hub/`:
+Auto-downloaded on first run, cached in `~/.cache/huggingface/hub/`:
 
-| Model | HF Repo | File | ~Size |
-|-------|---------|------|-------|
-| SegFace | `kartiknarayan/SegFace` | `convnext_celeba_512/model_299.pt` | 350 MB |
-| SAM 2.1 | `facebook/sam2.1-hiera-large` | `sam2.1_hiera_large.pt` | 856 MB |
-
-## Workspace Structure
-
-```
-<project_cache>/Cache/AI_Pipeline_Workspace/<shot_uuid>/
-├── source_sequence/          # Rendered source frames (PNG)
-│   ├── 00005.png
-│   ├── 00006.png
-│   └── ...
-├── masks/                    # SegFace + SAM2-refined masks
-│   ├── skin.png
-│   ├── lips.png
-│   └── eyes.png
-├── matte_skin/               # Per-feature alpha sequences
-│   └── source_sequence/
-│       └── pha/
-│           ├── 00005.png
-│           └── ...
-├── matte_lips/
-├── matte_eyes/
-├── matte_multicolor/         # Combined color canvas (color mode)
-└── sam2_frames/              # JPEG copies for SAM2 (SAM2 mode only)
-```
-
-## Assimilate Scratch API Endpoints Used
-
-| Operation | Endpoint | Method |
-|-----------|----------|--------|
-| Get selected shot | `/constructs/current/sel_shots` | GET |
-| Get slot properties | `/constructs/current/slots/{idx}` | GET |
-| Get project paths | `/projects/current` | GET |
-| Render frame snapshot | `/application/tools/image` | POST |
-| Create shot | `/shot/new` | POST |
-| Get/Set shot properties | `/shot/{uuid}` | GET / PUT |
-| Create layer | `/shot/{uuid}/layers/new` | POST |
-| Get layers | `/shot/{uuid}/layers` | GET |
-| Set layer matte | `/shot/{uuid}/layers/{idx}/matte` | PUT |
-| Add note | `/shot/{uuid}` (via PUT with notes array) | PUT |
+| Model | HF Repo | File | Size |
+|-------|---------|------|------|
+| SegFace | `kartiknarayan/SegFace` | `convnext_celeba_512/model_299.pt` | ~350 MB |
+| SAM 2.1 | `facebook/sam2.1-hiera-large` | `sam2.1_hiera_large.pt` | ~856 MB |
 
 ## SegFace Class Mapping (CelebAMask-HQ)
 
-| Index | Class | Used |
-|-------|-------|------|
-| 0 | Background | — |
-| 1 | Neck | — |
-| 2 | **Skin** | ✓ |
-| 3 | Cloth | — |
-| 4 | Left ear | — |
-| 5 | Right ear | — |
-| 6 | Left brow | — |
-| 7 | Right brow | — |
-| 8 | **Left eye** | ✓ |
-| 9 | **Right eye** | ✓ |
-| 10 | Nose | — |
-| 11 | Mouth | — |
-| 12 | **Lower lip** | ✓ |
-| 13 | **Upper lip** | ✓ |
-| 14 | Hair | — |
-| 15 | Eyeglasses | — |
-| 16 | Hat | — |
-| 17 | Earring | — |
-| 18 | Necklace | — |
-
-## Notes
-
-- The pipeline uses the **timeline slot length** (not the shot media length) for rendering, so trimmed shots are handled correctly.
-- Matte timecode is calculated as `shot_frame_tc + in_point` to align with the trimmed timeline position.
-- SAM2 produces binary masks — good for compositing workflows that need clean separations.
-- The SAM2 image predictor refinement step runs on frame 0, improving boundary quality before temporal propagation.
-- Distance-field edge boosting protects thin features (Eyes, Lips) from being swallowed by neighboring classes during boundary conflicts.
+| Index | Class | Used | | Index | Class | Used |
+|-------|-------|------|-|-------|-------|------|
+| 0 | Background | — | | 10 | Nose | — |
+| 1 | Neck | — | | 11 | Mouth | — |
+| 2 | **Skin** | ✓ | | 12 | **Lower lip** | ✓ |
+| 3 | Cloth | — | | 13 | **Upper lip** | ✓ |
+| 4 | Left ear | — | | 14 | Hair | — |
+| 5 | Right ear | — | | 15 | Eyeglasses | — |
+| 6 | Left brow | — | | 16 | Hat | — |
+| 7 | Right brow | — | | 17 | Earring | — |
+| 8 | **Left eye** | ✓ | | 18 | Necklace | — |
+| 9 | **Right eye** | ✓ | | | | |
