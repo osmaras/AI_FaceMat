@@ -37,6 +37,49 @@ run_AIFaceMat.bat -P1 1 -P2 y -P3 0
 uv run AI_FaceMat.py -P1 1 -P2 y -P3 0
 ```
 
+### Launch from Scratch Custom Button
+
+To call the pipeline from within Scratch, create a custom command button in the Scratch commands configuration. Add the following XML block to your Scratch `commands.xml` file (typically located in the Scratch user data directory):
+
+```xml
+<command uuid="072206de-9b40-40c3-9ca4-a7ab72d158ab" type="app" blocking="N"
+         minimize_on_exe="N" player_menu="Y" shot_selection="Y">
+    <title>Ai_FaceMat</title>
+    <cmdline>V:\PROGRAMING\Scratch-Scripts\AI_FaceMat\run_AIFaceMat.bat</cmdline>
+    <inputs>
+        <input uuid="072206de-9b40-40c3-9ca4-a7ab72d158ab" type="3" store="0">
+            <label>Processing Mode</label>
+            <value>grayscale,color</value>
+        </input>
+        <input uuid="072206de-9b40-40c3-9ca4-a7ab72d158ab" type="5" store="0">
+            <label>Clean up cache</label>
+            <value>yes</value>
+        </input>
+        <input uuid="072206de-9b40-40c3-9ca4-a7ab72d158ab" type="3" store="0">
+            <label>Timeline destination</label>
+            <value>Add layer,Add version</value>
+        </input>
+    </inputs>
+</command>
+```
+
+**Command attributes:**
+| Attribute | Value | Meaning |
+|-----------|-------|---------|
+| `type="app"` | — | Launches an external application |
+| `blocking="N"` | — | Scratch UI remains responsive during execution |
+| `shot_selection="Y"` | — | Requires a shot to be selected in the timeline |
+| `player_menu="Y"` | — | Appears in the player right-click menu |
+
+**Input mapping to script parameters:**
+| Input | Scratch type | UI element | Maps to |
+|-------|-------------|------------|---------|
+| Processing Mode | `type="3"` (dropdown) | `grayscale` / `color` | `-P1` (`0` / `1`) |
+| Clean up cache | `type="5"` (checkbox) | Checked = yes | `-P2` (`y` / `n`) |
+| Timeline destination | `type="3"` (dropdown) | `Add layer` / `Add version` | `-P3` (`0` / `1`) |
+
+> **Note:** Update the `<cmdline>` path to match your local installation directory. The UUID values should be unique — generate new ones if needed.
+
 ## Parameters
 
 | Param | Values | Description |
