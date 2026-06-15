@@ -172,6 +172,10 @@ $accContent = @"
 				<label>Timeline destination</label>
 				<value>Add layer, Add version</value>
 			</input>
+			<input uuid="072206de-9b40-40c3-9ca4-a7ab72d158ab" type="3" store="0">
+				<label>SegFace Model</label>
+				<value>ConvNeXt CelebA (accurate),SwinB CelebA (fast),SwinV2B CelebA (best),SwinB LaPa (alt dataset)</value>
+			</input>
 		</inputs>
 	</command>
 </custom_commands>
