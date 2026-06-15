@@ -20,7 +20,7 @@ An AI-powered pipeline that automatically generates per-feature face mattes (Ski
 
 ### Prerequisites
 
-- **Windows 10/11** with NVIDIA GPU (CUDA 12.4+)
+- **Windows 10/11** with NVIDIA GPU
 - **Assimilate Scratch** running locally (`http://127.0.0.1:8080`)
 
 ### Steps
@@ -41,8 +41,17 @@ The installer will:
 - Ask where to install (default: the cloned directory)
 - Ask for a UV cache location (use a fast SSD like `G:\` if available)
 - Check if [uv](https://docs.astral.sh/uv/) is installed — if not, install it automatically
-- Patch `run_AIFaceMat.bat` with the correct paths and UV binary location
+- **Auto-detect your GPU** via `nvidia-smi` and select the correct CUDA/PyTorch build
+- Patch `run_AIFaceMat.bat` with the correct paths, UV binary, and PyTorch index
+- Patch `AI_FaceMat.py` with the detected torch/torchvision versions
 - Patch `Ai_Facemat.acc` with the correct batch file path for Scratch
+
+**GPU auto-detection:**
+
+| Compute Capability | GPU Family | CUDA Build | PyTorch |
+|---|---|---|---|
+| sm < 10.0 | Ampere, Ada Lovelace, Hopper | cu124 | torch 2.5.1 |
+| sm ≥ 10.0 | Blackwell (B100, B200, RTX 50xx) | cu128 | torch 2.6.0 |
 - Generate an `uninstall.ps1` for clean removal
 
 3. **Load the Custom Command in Scratch** (see [Configuration](#configuration) below)
