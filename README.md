@@ -175,9 +175,9 @@ The installer prompts for these values during setup. To change them later, edit 
 #### Color Combine (color mode only)
 - Composites per-feature alphas into a multicolor canvas
 
-### Stage 4 — Conformance
+### Stage 4 — Conform
 - Imports matte sequences back into Scratch as layers or versions
-- Conforms source metadata (timecode, fps, reel_id) onto matte shots
+- Injects source metadata (timecode, fps, reel_id) onto matte shots
 - Aligns matte frame numbering with the shot's trimmed range
 
 ### Stage 5 — Cleanup & Notifications
