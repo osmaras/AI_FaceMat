@@ -65,7 +65,9 @@ class ScratchAPI:
         return proj.project_paths if proj and proj.project_paths else None
 
     # ---- RENDERING (Output Node + Render Queue) ----
-
+    # Output node type UUID (constant in Scratch for all output nodes)
+    OUTPUT_NODE_TYPE_UUID = "00000000-0000-0000-0000-000000000004"
+    
     def create_output_node(self, name, output_path, file_format="png",
                            frame_in=None, frame_out=None):
         """
@@ -77,6 +79,7 @@ class ScratchAPI:
         """
         shot = assimilate_client.ShotData()
         shot.name = name
+        shot.type_uuid = self.OUTPUT_NODE_TYPE_UUID                               
         shot.output = assimilate_client.ShotDataOutput()
         shot.output.outputpath = output_path
         shot.output.extention = file_format
@@ -132,11 +135,11 @@ class ScratchAPI:
         """
         Import a matte frame sequence into Scratch as a layer on a shot.
         1. Create a new shot from the first frame of the matte sequence.
-        2. Conform source metadata (timecode, fps, reel_id) onto the matte shot.
+        2. Inject source metadata (timecode, fps, reel_id) onto the matte shot.
         3. Link that shot as a matte layer on the target shot.
 
         API: POST /shot/new                              (create matte shot)
-             PUT  /shot/{matte_shot_uuid}                 (conform metadata)
+             PUT  /shot/{matte_shot_uuid}                 (inject metadata)
              POST /shot/{shot_uuid}/layers/new            (create layer)
              PUT  /shot/{shot_uuid}/layers/{layer_idx}/matte  (set matte source)
         """
@@ -157,7 +160,7 @@ class ScratchAPI:
         if not matte_shot_uuid:
             raise RuntimeError(f"Failed to create matte shot for '{layer_name}'")
 
-        # Step 2: Conform source metadata onto the matte shot
+        # Step 2: Inject source metadata onto the matte shot
         if source_props:
             meta = assimilate_client.ShotData()
             for k, v in source_props.items():
@@ -166,7 +169,7 @@ class ScratchAPI:
             try:
                 self.projects.set_shot(meta, matte_shot_uuid)
             except Exception as e:
-                print(f"  ⚠️ Could not conform metadata on matte shot: {e}")
+                print(f"  ⚠️ Could not inject metadata on matte shot: {e}")
 
         # Step 3: Create an empty layer on the target shot
         layer = assimilate_client.LayerData()
