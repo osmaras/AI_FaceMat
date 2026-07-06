@@ -273,21 +273,36 @@ def main():
     print(f"🎞️ Frame Range: {in_point} + {shot_length} frames")
 
     # ----------------------------------------------------------------------
-    # STAGE 2: RENDER FRAMES TO DISK VIA SNAPSHOT API
-    # Uses shot length directly — no output node needed.
+    # STAGE 2: RENDER FRAMES TO DISK VIA RENDER SHOT
+    # Creates a temporary render shot wired to the selected shot, renders
+    # the full sequence to RENDER_IN, then deletes the render shot.
     # ----------------------------------------------------------------------
     existing_frames = [f for f in os.listdir(RENDER_IN) if f.endswith('.png')]
     if len(existing_frames) >= shot_length:
         print(f"🎞️ Found {len(existing_frames)} cached frames, skipping render pass.")
     else:
-        print(f"🎞️ Rendering {shot_length} frames via snapshot API...")
-        for i in range(shot_length):
-            frame_num = in_point + i
-            fpath = os.path.join(RENDER_IN, f"{frame_num:05d}.png")
-            scratch.render_frame_snapshot(shot_uuid, frame_num, fpath)
-            if (i + 1) % 10 == 0 or (i + 1) == shot_length:
-                print(f"\r  ↳ Rendered {i + 1}/{shot_length} frames", end="", flush=True)
-        print()
+        print(f"🎞️ Rendering {shot_length} frames via render shot...")
+        filespec = RENDER_IN + "\\#frame[5].#ext"
+        render_node = scratch.create_render_shot(
+            name=f"AI_Pipeline_{shot_name}",
+            filespec=filespec,
+            input_shot_uuid=shot_uuid,
+            file_format="png",
+        )
+        render_uuid = str(render_node.uuid)
+        try:
+            queue_item = scratch.start_render(render_uuid)
+            print("  ↳ Rendering", end="", flush=True)
+            while queue_item.status in ("waiting", "processing"):
+                time.sleep(1)
+                print(".", end="", flush=True)
+                queue_item = scratch.poll_render(render_uuid)
+            print()
+            if queue_item.status != "finished":
+                print(f"❌ Render failed with status: {queue_item.status}")
+                return
+        finally:
+            scratch.delete_render_shot(render_uuid)
 
     frame_list = sorted([f for f in os.listdir(RENDER_IN) if f.endswith('.png')])
     if not frame_list:

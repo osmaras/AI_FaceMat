@@ -10,6 +10,9 @@ Usage:
 
     scratch = ScratchAPI()
     selection, shot_data = scratch.get_selected_shot()
+    render_node = scratch.create_render_shot("My Render", "renders\\#sname.#frame[6].#ext", shot_data.uuid)
+    item = scratch.start_render(render_node.uuid)
+    item = scratch.poll_render(render_node.uuid)  # call in a loop until item.status != "processing"
 """
 
 import os
@@ -64,69 +67,80 @@ class ScratchAPI:
         proj = self.projects.get_projects_current()
         return proj.project_paths if proj and proj.project_paths else None
 
-    # ---- RENDERING (Output Node + Render Queue) ----
-    # Output node type UUID (constant in Scratch for all output nodes)
-    OUTPUT_NODE_TYPE_UUID = "00000000-0000-0000-0000-000000000004"
-    
-    def create_output_node(self, name, output_path, file_format="png",
-                           frame_in=None, frame_out=None):
+    # ---- RENDERING (Render Shot + Render Queue) ----
+    # Tiff/PNG render shot type UUID (constant in Scratch)
+    RENDER_SHOT_TYPE_UUID = "00000000-0000-0000-0000-000000000004"
+
+    def create_render_shot(self, name, filespec, input_shot_uuid,
+                           file_format="tif", components=4, fmt=0,
+                           colorspace="Rec709", eotf="Gamma 2.4",
+                           type_uuid=None):
         """
-        Create a temporary output node on the current construct, configured
-        to render a frame range to the given path.
-        API: POST /constructs/current/outputs/new
-        Body: ShotData { name, output: { outputpath, extention }, handles: { frame_in, frame_out } }
+        Create a render shot and wire an existing shot as its input.
+        Follows the RenderSelected pattern: add_shot() + set_shot_input().
+        No separate output node required.
+
+        API: POST /shot/new      (create render shot)
+             PUT  /shot/{render_uuid}/inputs/0  (set input)
+
+        Args:
+            name:            Display name for the render shot.
+            filespec:        Output file spec, e.g. "renders\\#sname.#frame[6].#ext"
+            input_shot_uuid: UUID of the shot to render.
+            file_format:     File extension (default "tif").
+            components:      Number of colour components (default 4).
+            fmt:             ShotDataOutput format flag (0 = default).
+            colorspace:      Output colour space (default "Rec709").
+            eotf:            Output EOTF (default "Gamma 2.4").
+            type_uuid:       Override the render shot type UUID.
+
         Returns the created ShotData (with .uuid).
         """
-        shot = assimilate_client.ShotData()
-        shot.name = name
-        shot.type_uuid = self.OUTPUT_NODE_TYPE_UUID                               
-        shot.output = assimilate_client.ShotDataOutput()
-        shot.output.outputpath = output_path
-        shot.output.extention = file_format
-        if frame_in is not None and frame_out is not None:
-            shot.handles = assimilate_client.ShotDataHandles()
-            shot.handles.frame_in = frame_in
-            shot.handles.frame_out = frame_out
-        return self.projects.add_construct_current_output(shot, level="ALL")
+        sd = assimilate_client.ShotData(
+            type_uuid=type_uuid or self.RENDER_SHOT_TYPE_UUID,
+            name=name,
+            output=assimilate_client.ShotDataOutput(
+                components=components,
+                extention=file_format,
+                filespec=filespec,
+                format=fmt,
+            ),
+            color_format=assimilate_client.ShotDataColorFormat(
+                colorspace=colorspace,
+                eotf=eotf,
+            ),
+        )
+        render_node = self.projects.add_shot(sd)
 
-    def start_output_render(self, output_uuid):
+        inp = assimilate_client.InputData(create_copy=True, input_uuid=input_shot_uuid)
+        self.projects.set_shot_input(inp, render_node.uuid, 0)
+
+        return render_node
+
+    def start_render(self, render_uuid):
         """
-        Add an output node to the render queue and start rendering immediately.
-        API: POST /application/render/{output_uuid}
+        Add a render shot to the render queue and start rendering immediately.
+        Clears any previously rendered media before starting.
+        API: POST /application/render/{render_uuid}
         Returns the RenderQueueItem.
         """
-        return self.app.add_application_render_queue_item_start(output_uuid)
+        dmd = assimilate_client.DeleteMediaData(delete_existing_media=True)
+        return self.app.add_application_render_queue_item_start(render_uuid, body=dmd)
 
-    def poll_output_render(self, output_uuid):
+    def poll_render(self, render_uuid):
         """
         Poll a render queue item for progress.
-        API: GET /application/render/{output_uuid}
+        API: GET /application/render/{render_uuid}
         Returns RenderQueueItem with .status, .frames_done, .frames_total
         """
-        return self.app.get_application_render_queue_item(output_uuid)
+        return self.app.get_application_render_queue_item(render_uuid)
 
-    def delete_output_node(self, output_uuid):
+    def delete_render_shot(self, render_uuid):
         """
-        Remove a temporary output node from the current construct.
-        Rendered files on disk are preserved.
-        API: DELETE /constructs/current/outputs/{output_uuid}
+        Remove a render shot from the project (rendered files on disk are preserved).
+        API: DELETE /shot/{render_uuid}
         """
-        return self.projects.delete_construct_current_output(output_uuid)
-
-    # ---- SNAPSHOT RENDERING (fallback) ----
-
-    def render_frame_snapshot(self, shot_uuid, frame_number, output_path):
-        """
-        Render a single frame of a shot directly to disk via the snapshot tool.
-        API: POST /application/tools/image
-        Body: ImageSnapshot { uuid, frame, file, proxy }
-        """
-        snap = assimilate_client.ImageSnapshot()
-        snap.uuid = shot_uuid
-        snap.frame = frame_number
-        snap.file = output_path
-        snap.proxy = False
-        return self.app.do_application_render_snapshot(snap)
+        return self.projects.delete_shot(render_uuid)
 
     # ---- LAYERS ----
 
