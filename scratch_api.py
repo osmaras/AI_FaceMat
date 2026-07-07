@@ -19,6 +19,7 @@ import os
 
 import assimilate_client
 from assimilate_client import Configuration, ApiClient
+from assimilate_client.rest import ApiException
 
 
 class ScratchAPI:
@@ -74,7 +75,7 @@ class ScratchAPI:
     def create_render_shot(self, name, filespec, input_shot_uuid,
                            file_format="tif", components=4, fmt=0,
                            colorspace="Rec709", eotf="Gamma 2.4",
-                           type_uuid=None):
+                           type_uuid=None, outputpath=None):
         """
         Create a render shot and wire an existing shot as its input.
         Follows the RenderSelected pattern: add_shot() + set_shot_input().
@@ -85,7 +86,9 @@ class ScratchAPI:
 
         Args:
             name:            Display name for the render shot.
-            filespec:        Output file spec, e.g. "renders\\#sname.#frame[6].#ext"
+            filespec:        Output filename pattern, e.g. "#sname.#frame[6].#ext"
+                             or "#frame[5].#ext". Keep this to the filename only;
+                             pass the directory via `outputpath`.
             input_shot_uuid: UUID of the shot to render.
             file_format:     File extension (default "tif").
             components:      Number of colour components (default 4).
@@ -93,18 +96,27 @@ class ScratchAPI:
             colorspace:      Output colour space (default "Rec709").
             eotf:            Output EOTF (default "Gamma 2.4").
             type_uuid:       Override the render shot type UUID.
+            outputpath:      Absolute directory for rendered files. When set,
+                             this is stored in ShotDataOutput.outputpath and
+                             `filespec` should contain only the filename pattern.
+                             Scratch does not support absolute paths inside
+                             `filespec`, so the directory must be split out.
 
         Returns the created ShotData (with .uuid).
         """
+        output_kwargs = dict(
+            components=components,
+            extention=file_format,
+            filespec=filespec,
+            format=fmt,
+        )
+        if outputpath:
+            output_kwargs["outputpath"] = outputpath
+
         sd = assimilate_client.ShotData(
             type_uuid=type_uuid or self.RENDER_SHOT_TYPE_UUID,
             name=name,
-            output=assimilate_client.ShotDataOutput(
-                components=components,
-                extention=file_format,
-                filespec=filespec,
-                format=fmt,
-            ),
+            output=assimilate_client.ShotDataOutput(**output_kwargs),
             color_format=assimilate_client.ShotDataColorFormat(
                 colorspace=colorspace,
                 eotf=eotf,
@@ -117,14 +129,20 @@ class ScratchAPI:
 
         return render_node
 
-    def start_render(self, render_uuid):
+    def start_render(self, render_uuid, delete_existing_media=True):
         """
         Add a render shot to the render queue and start rendering immediately.
-        Clears any previously rendered media before starting.
         API: POST /application/render/{render_uuid}
         Returns the RenderQueueItem.
+
+        Args:
+            render_uuid:           UUID of the render shot to queue.
+            delete_existing_media: When True (default), Scratch purges any
+                previously rendered media for this render shot before starting.
+                Pass False to keep cached frames on disk so the pipeline can
+                skip the render pass on subsequent runs.
         """
-        dmd = assimilate_client.DeleteMediaData(delete_existing_media=True)
+        dmd = assimilate_client.DeleteMediaData(delete_existing_media=delete_existing_media)
         return self.app.add_application_render_queue_item_start(render_uuid, body=dmd)
 
     def poll_render(self, render_uuid):
@@ -135,12 +153,26 @@ class ScratchAPI:
         """
         return self.app.get_application_render_queue_item(render_uuid)
 
-    def delete_render_shot(self, render_uuid):
+    def delete_render_shot(self, render_uuid, quiet=True):
         """
         Remove a render shot from the project (rendered files on disk are preserved).
         API: DELETE /shot/{render_uuid}
+
+        A render shot that is still in the render queue (or in an errored/locked
+        state) cannot be deleted and Scratch returns HTTP 409 Conflict. When
+        `quiet` is True (default), such failures are logged and swallowed so
+        that pipeline cleanup never masks the original error. Pass
+        `quiet=False` to re-raise the ApiException.
         """
-        return self.projects.delete_shot(render_uuid)
+        try:
+            return self.projects.delete_shot(render_uuid)
+        except ApiException as e:
+            msg = f"⚠️ Could not delete render shot {render_uuid}: {e}"
+            if quiet:
+                print(msg)
+                return None
+            print(msg)
+            raise
 
     # ---- LAYERS ----
 

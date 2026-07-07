@@ -277,21 +277,27 @@ def main():
     # Creates a temporary render shot wired to the selected shot, renders
     # the full sequence to RENDER_IN, then deletes the render shot.
     # ----------------------------------------------------------------------
-    existing_frames = [f for f in os.listdir(RENDER_IN) if f.endswith('.png')]
+    existing_frames = [f for f in os.listdir(RENDER_IN) if f.endswith('.jpg')]
     if len(existing_frames) >= shot_length:
         print(f"🎞️ Found {len(existing_frames)} cached frames, skipping render pass.")
     else:
         print(f"🎞️ Rendering {shot_length} frames via render shot...")
-        filespec = RENDER_IN + "\\#frame[5].#ext"
+        # Scratch does not support absolute paths inside `filespec`; split the
+        # output directory into `outputpath` and keep only the filename pattern.
+        # Render JPG directly — Scratch has a fast native JPG encoder, and SAM2
+        # requires JPEG frames anyway. Eliminates the TIFF→JPG conversion pass.
         render_node = scratch.create_render_shot(
             name=f"AI_Pipeline_{shot_name}",
-            filespec=filespec,
+            filespec="#frame[6].#ext",
+            outputpath=RENDER_IN,
             input_shot_uuid=shot_uuid,
-            file_format="png",
+            file_format="jpg",
         )
         render_uuid = str(render_node.uuid)
         try:
-            queue_item = scratch.start_render(render_uuid)
+            # Only purge previous render media when auto-clean is enabled.
+            # When disabled, Scratch reuses cached frames for re-renders.
+            queue_item = scratch.start_render(render_uuid, delete_existing_media=args.auto_clean)
             print("  ↳ Rendering", end="", flush=True)
             while queue_item.status in ("waiting", "processing"):
                 time.sleep(1)
@@ -299,12 +305,15 @@ def main():
                 queue_item = scratch.poll_render(render_uuid)
             print()
             if queue_item.status != "finished":
-                print(f"❌ Render failed with status: {queue_item.status}")
+                err_detail = getattr(queue_item, "error", None) or getattr(queue_item, "message", None)
+                print(f"❌ Render failed with status: {queue_item.status}"
+                      + (f" ({err_detail})" if err_detail else ""))
                 return
         finally:
+            # Best-effort cleanup; never mask the original render error.
             scratch.delete_render_shot(render_uuid)
 
-    frame_list = sorted([f for f in os.listdir(RENDER_IN) if f.endswith('.png')])
+    frame_list = sorted([f for f in os.listdir(RENDER_IN) if f.endswith('.jpg')])
     if not frame_list:
         print("❌ Error: Render cache folder is empty. Cannot continue.")
         return
@@ -375,15 +384,8 @@ def main():
         "configs/sam2.1/sam2.1_hiera_l.yaml", sam2_ckpt, device=device
     )
 
-    # SAM2 requires JPEG frames — convert PNGs to a temp JPG directory
-    sam2_frames_dir = os.path.join(PIPELINE_WORKSPACE, "sam2_frames")
-    os.makedirs(sam2_frames_dir, exist_ok=True)
-    for png_name in frame_list:
-        jpg_name = os.path.splitext(png_name)[0] + ".jpg"
-        jpg_path = os.path.join(sam2_frames_dir, jpg_name)
-        if not os.path.exists(jpg_path):
-            img = cv2.imread(os.path.join(RENDER_IN, png_name))
-            cv2.imwrite(jpg_path, img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    # Frames are already JPEG from the render pass — point SAM2 directly at them
+    sam2_frames_dir = RENDER_IN
 
     # SAM2: init state and register per-feature masks on frame 0
     print("  🌀 SAM2: initializing tracking memory...")
@@ -513,10 +515,6 @@ def main():
         if os.path.exists(RENDER_IN):
             shutil.rmtree(RENDER_IN)
             print(f"  ✓ Purged: {RENDER_IN}")
-        sam2_tmp = os.path.join(PIPELINE_WORKSPACE, "sam2_frames")
-        if os.path.exists(sam2_tmp):
-            shutil.rmtree(sam2_tmp)
-            print(f"  ✓ Purged: {sam2_tmp}")
 
     note_text = (
         f"AI Face Matte Pipeline Completed.\n"
