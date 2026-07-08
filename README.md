@@ -51,7 +51,7 @@ The installer will:
 | Compute Capability | GPU Family | CUDA Build | PyTorch |
 |---|---|---|---|
 | sm < 10.0 | Ampere, Ada Lovelace, Hopper | cu124 | torch 2.5.1 |
-| sm ≥ 10.0 | Blackwell (B100, B200, RTX 50xx) | cu128 | torch 2.6.0 |
+| sm ≥ 10.0 | Blackwell (B100, B200, RTX 50xx) | cu128 | torch 2.7.0 |
 - Generate an `uninstall.ps1` for clean removal
 
 3. **Load the Custom Command in Scratch** (see [Configuration](#configuration) below)
@@ -83,7 +83,7 @@ The pipeline runs as a **Custom Command** inside Scratch. Custom Commands extend
 
 ### Input Form
 
-The custom command presents three inputs when triggered. All values are passed to the script through command-line parameters:
+The custom command presents four inputs when triggered. All values are passed to the script through command-line parameters:
 
 | Input | Type | Options | Script Parameter |
 |-------|------|---------|-----------------|
