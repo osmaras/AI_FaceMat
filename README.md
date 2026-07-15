@@ -3,17 +3,10 @@
 An AI-powered pipeline that automatically generates per-feature face mattes (Skin, Lips, Eyes) from a selected shot in Assimilate Scratch, and loads them back as layers or versions for downstream compositing.
 
 ```
-┌─────────────┐    ┌──────────────────┐    ┌─────────────────┐    ┌──────────────────┐
-│   Scratch    │───▶│  Render Frames   │───▶│  AI Analysis     │───▶│  Import Mattes   │
-│  Shot Select │    │  (Snapshot API)  │    │  (GPU Pipeline)  │    │  (Layer/Version) │
-└─────────────┘    └──────────────────┘    └─────────────────┘    └──────────────────┘
-                                               │
-                                               ▼
-                                    ┌─────────────────────┐
-                                    │  1. SegFace Parsing  │  → Coarse semantic masks
-                                    │  2. SAM2 Refinement  │  → Boundary-aware logits
-                                    │  3. Video Tracking   │  → Temporal propagation
-                                    └─────────────────────┘
+┌──────────────┐      ┌──────────────────┐     ┌─────────────────┐     ┌───────────────────┐     ┌───────────────────┐
+│   Scratch    │───▶ │  Render Frames    │───▶│  SegFace Parse  │───▶│  SAM2 Refine +    │───▶│ Import Mattes      │
+│  Shot Select │      │  (API)           │     │  (GPU, frame 0) │     │  Video Tracking   │     │  (Layer/Version)  │
+└──────────────┘      └──────────────────┘     └─────────────────┘     └───────────────────┘     └───────────────────┘
 ```
 
 ## Installation
@@ -41,7 +34,7 @@ The installer will:
 - Ask where to install (default: the cloned directory)
 - Ask for a UV cache location (use a fast SSD like `G:\` if available)
 - Check if [uv](https://docs.astral.sh/uv/) is installed — if not, install it automatically
-- **Auto-detect your GPU** via `nvidia-smi` and select the correct CUDA/PyTorch build
+- **Auto-detect your GPU** via `nvidia-smi` and select the correct CUDA/PyTorch build from `torch-versions.json`
 - Patch `run_AIFaceMat.bat` with the correct paths, UV binary, and PyTorch index
 - Patch `AI_FaceMat.py` with the detected torch/torchvision versions
 - Patch `Ai_Facemat.acc` with the correct batch file path for Scratch
@@ -145,42 +138,36 @@ The installer prompts for these values during setup. To change them later, edit 
 
 ## Pipeline Stages
 
-### Stage 1 — Metadata & Workspace
+Each stage is a class in `AI_FaceMat.py`, orchestrated by the `Pipeline` class. Shared state flows through a `PipelineContext` dataclass.
+
+### Stage 1 — Metadata & Workspace (`MetadataStage`)
 - Queries the active Scratch construct for the selected shot
 - Reads the **timeline slot length** (not shot media length) for accurate trim range
 - Resolves workspace paths from the project's cache/media configuration
-- Calculates the trimmed timecode for matte conformance
+- Creates a `FrameMapper` for frame numbering alignment
 
-### Stage 2 — Frame Rendering
-- Renders the shot's trimmed frame range to disk via Scratch's Snapshot API
+### Stage 2 — Frame Rendering (`RenderStage`)
+- Renders the shot's trimmed frame range to disk via Scratch's render shot API
 - Uses the timeline slot length for frame count, respecting in/out handles
 - Caches rendered frames — skips re-rendering if cached frames already exist
 
-### Stage 3 — AI Analysis
+### Stage 3 — SegFace Semantic Parsing (`SegFaceStage`)
+- Runs [SegFace](https://github.com/Kartik-3004/SegFace) on frame 0
+- Produces a per-dataset face segmentation map (19 classes for CelebAMask-HQ, 11 for LaPa)
+- Extracts per-feature binary masks (Skin, Lips, Eyes) via `FEATURE_CLASS_MAP`
 
-#### SegFace Semantic Parsing
-- Runs [SegFace](https://github.com/Kartik-3004/SegFace) (ConvNeXt backbone) on frame 0
-- Produces a 19-class face segmentation map (CelebAMask-HQ)
-- Extracts per-feature binary masks (Skin, Lips, Eyes)
-
-#### SAM2 Image Predictor Refinement
-- Refines SegFace's coarse masks using [SAM 2.1](https://github.com/facebookresearch/sam2) with box prompts
+### Stage 4 — SAM2 Refinement & Tracking (`SAM2Stage`)
+- **Image predictor**: refines SegFace's coarse masks using [SAM 2.1](https://github.com/facebookresearch/sam2) with box prompts
 - **Distance-field edge boosting** for thin features (Eyes, Lips): prevents them from being swallowed by neighboring classes during boundary conflicts
+- **Video tracking**: propagates refined masks through the entire shot via `propagate_in_video`
+- **Color combine** (color mode only): composites per-feature alphas into a multicolor canvas
 
-#### SAM2 Video Tracking
-- Runs SAM 2.1 video predictor with refined masks as seed prompts
-- `propagate_in_video` tracks all 3 features simultaneously through the shot
-- Produces **binary masks** per frame
-
-#### Color Combine (color mode only)
-- Composites per-feature alphas into a multicolor canvas
-
-### Stage 4 — Conform
+### Stage 5 — Conform (`ConformStage`)
 - Imports matte sequences back into Scratch as layers or versions
 - Injects source metadata (timecode, fps, reel_id) onto matte shots
-- Aligns matte frame numbering with the shot's trimmed range
+- Uses `FrameMapper` to align matte frame numbering with the shot's trimmed range
 
-### Stage 5 — Cleanup & Notifications
+### Stage 6 — Cleanup & Notifications (`CleanupStage`)
 - Optionally purges rendered source cache
 - Appends a pipeline completion note to the shot's metadata
 
@@ -188,11 +175,12 @@ The installer prompts for these values during setup. To change them later, edit 
 
 | File | Description |
 |------|-------------|
-| `AI_FaceMat.py` | Main pipeline script (SegFace + SAM2 + Scratch integration) |
+| `AI_FaceMat.py` | Main pipeline: 6 stage classes, `Pipeline` orchestrator, `FrameMapper`, `PipelineContext`, SegFace + SAM2 + Scratch integration |
 | `scratch_api.py` | Reusable Scratch REST API wrapper — importable from other scripts |
+| `torch-versions.json` | Single source of truth for PyTorch/CUDA version mappings (read by `install.ps1`) |
 | `run_AIFaceMat.bat` | Batch launcher (configured by installer) |
 | `Ai_Facemat.acc` | Scratch Custom Command definition (load in Scratch via System Settings → Custom Commands → Import) |
-| `install.ps1` | Interactive installer (uv detection, path config, .acc/.bat patching) |
+| `install.ps1` | Interactive installer (uv detection, GPU detection, path config, .acc/.bat/.py patching) |
 
 ### Reusing the Scratch API
 
@@ -214,6 +202,8 @@ print(f"Shot: {shot_data.name}, Length: {shot_data.length}")
 | SAM 2 | [facebookresearch/sam2](https://github.com/facebookresearch/sam2) | Video object tracking + image predictor refinement |
 | assimilate_client | [Assimilate-Inc/Assimilate-REST](https://github.com/Assimilate-Inc/Assimilate-REST) | Scratch REST API SDK |
 | huggingface_hub | PyPI | Model checkpoint caching |
+
+PyTorch and torchvision versions are managed via `torch-versions.json` (single source of truth). The installer reads this file and patches `AI_FaceMat.py` accordingly. To update PyTorch, edit the JSON file only.
 
 ### Model Checkpoints
 
@@ -267,26 +257,41 @@ The pipeline maps SegFace's semantic output to three features (Skin, Lips, Eyes)
 
 ### Adding Custom Feature Groups
 
-To extract additional face features (e.g., Hair, Nose, Eyeglasses), edit the `feature_masks` dictionary in `AI_FaceMat.py` (Stage 3 section):
+To extract additional face features (e.g., Hair, Nose, Eyeglasses):
+
+1. Add the feature to `FEATURE_CLASS_MAP` in `AI_FaceMat.py` for each dataset you use:
 
 ```python
-feature_masks = {
-    "Skin": (parsed_semantic_map == 2).astype(np.uint8) * 255,
-    "Lips": np.isin(parsed_semantic_map, [12, 13]).astype(np.uint8) * 255,
-    "Eyes": np.isin(parsed_semantic_map, [8, 9]).astype(np.uint8) * 255,
-    # Add more features here:
-    "Hair": (parsed_semantic_map == 14).astype(np.uint8) * 255,
-    "Nose": (parsed_semantic_map == 10).astype(np.uint8) * 255,
-    "Eyeglasses": (parsed_semantic_map == 15).astype(np.uint8) * 255,
+FEATURE_CLASS_MAP = {
+    "celeba": {
+        "Skin": lambda m: (m == 2).astype(np.uint8) * 255,
+        "Lips": lambda m: np.isin(m, [12, 13]).astype(np.uint8) * 255,
+        "Eyes": lambda m: np.isin(m, [8, 9]).astype(np.uint8) * 255,
+        # Add more features here:
+        "Hair": lambda m: (m == 14).astype(np.uint8) * 255,
+        "Nose": lambda m: (m == 10).astype(np.uint8) * 255,
+        "Eyeglasses": lambda m: (m == 15).astype(np.uint8) * 255,
+    },
+    "lapa": { ... },
 }
 ```
 
-Then add the new feature names to the `FEATURES` list:
+2. Add the feature name to the `FEATURES` list:
 
 ```python
 FEATURES = ["Skin", "Lips", "Eyes", "Hair", "Nose", "Eyeglasses"]
 ```
 
-For multi-class features that span multiple indices (like Lips = 12 + 13), use `np.isin()`. For single-class features, use `==`.
+3. Add a SAM2 `obj_id` mapping in `SAM2Stage.run()` (must be unique integers):
 
-The SAM2 refinement and video tracking will automatically pick up the new features — no other code changes needed.
+```python
+sam2_predictor.add_new_mask(inference_state=inference_state, frame_idx=0, obj_id=4, mask=ctx.feature_masks["Hair"])
+```
+
+And update `obj_id_to_feature`:
+
+```python
+obj_id_to_feature = {1: "Lips", 2: "Skin", 3: "Eyes", 4: "Hair"}
+```
+
+For multi-class features that span multiple indices (like Lips = 12 + 13), use `np.isin()`. For single-class features, use `==`.

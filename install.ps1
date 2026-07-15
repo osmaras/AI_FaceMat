@@ -81,11 +81,21 @@ else {
 
 # ────────────────────────────────────────────────────────────
 # 4. Detect GPU and select CUDA / PyTorch versions
+#    Versions are read from torch-versions.json (single source of truth).
 # ────────────────────────────────────────────────────────────
 Write-Host ""
+
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+if ([string]::IsNullOrWhiteSpace($scriptDir)) { $scriptDir = Get-Location }
+$torchVersionsPath = Join-Path $scriptDir "torch-versions.json"
+
+if (-not (Test-Path $torchVersionsPath)) {
+    Write-Host "ERROR: torch-versions.json not found at $torchVersionsPath" -ForegroundColor Red
+    exit 1
+}
+$torchVersions = Get-Content $torchVersionsPath -Raw | ConvertFrom-Json
+
 $cudaVersion = "cu124"
-$torchVer = "2.5.1"
-$torchvisionVer = "0.20.1"
 $gpuName = "Unknown"
 $gpuComputeCap = "0.0"
 
@@ -104,9 +114,7 @@ try {
 
                 if ($major -ge 10) {
                     $cudaVersion = "cu128"
-                    $torchVer = "2.7.0"
-                    $torchvisionVer = "0.22.0"
-                    Write-Host "  -> Blackwell detected, using PyTorch 2.7.0 (cu128)" -ForegroundColor Yellow
+                    Write-Host "  -> Blackwell detected, using cu128 builds" -ForegroundColor Yellow
                 }
                 else {
                     Write-Host "  -> Using CUDA 12.4 build (compatible)" -ForegroundColor DarkGray
@@ -126,9 +134,12 @@ catch {
     Write-Host "  Defaulting to CUDA 12.4" -ForegroundColor DarkGray
 }
 
+$torchVer = $torchVersions.$cudaVersion.torch
+$torchvisionVer = $torchVersions.$cudaVersion.torchvision
+$pytorchIndex = $torchVersions.$cudaVersion.index_url
+
 $torchSpec = "torch==$torchVer+$cudaVersion"
 $torchvisionSpec = "torchvision==$torchvisionVer+$cudaVersion"
-$pytorchIndex = "https://download.pytorch.org/whl/$cudaVersion"
 
 Write-Host "  PyTorch: $torchSpec" -ForegroundColor White
 Write-Host "  Index:   $pytorchIndex" -ForegroundColor White
@@ -138,12 +149,10 @@ Write-Host "  Index:   $pytorchIndex" -ForegroundColor White
 # ────────────────────────────────────────────────────────────
 Write-Host "`nInstalling to: $installDir" -ForegroundColor Cyan
 
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-if ([string]::IsNullOrWhiteSpace($scriptDir)) { $scriptDir = Get-Location }
-
 $files = @(
     "AI_FaceMat.py",
     "scratch_api.py",
+    "torch-versions.json",
     "run_AIFaceMat.bat",
     "Ai_Facemat.acc",
     "README.md"

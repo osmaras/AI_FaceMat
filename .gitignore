@@ -4,6 +4,9 @@
 # Segface fork packaging files (not part of the app)
 segface-fork-files/
 
+# Agent configuration (local only)
+AGENTS.md
+
 # API docs (reference only, not part of the app)
 docs/
 
