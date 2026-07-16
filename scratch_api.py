@@ -132,26 +132,29 @@ class ScratchAPI:
     def start_render(self, render_uuid, delete_existing_media=True):
         """
         Add a render shot to the render queue and start rendering immediately.
-        API: POST /application/render/{render_uuid}
+        API: POST /application/render/new
         Returns the RenderQueueItem.
 
         Args:
-            render_uuid:           UUID of the render shot to queue.
+            render_uuid:           UUID of the render shot (output node) to queue.
             delete_existing_media: When True (default), Scratch purges any
                 previously rendered media for this render shot before starting.
                 Pass False to keep cached frames on disk so the pipeline can
                 skip the render pass on subsequent runs.
         """
-        dmd = assimilate_client.DeleteMediaData(delete_existing_media=delete_existing_media)
-        return self.app.add_application_render_queue_item_start(render_uuid, body=dmd)
+        rst = assimilate_client.RenderQueueSettings(
+            output_uuid=render_uuid,
+            delete_existing_media=delete_existing_media,
+        )
+        return self.app.new_application_render_queue_item_start(body=rst)
 
-    def poll_render(self, render_uuid):
+    def poll_render(self, queue_item_uuid):
         """
         Poll a render queue item for progress.
-        API: GET /application/render/{render_uuid}
+        API: GET /application/render/{queue_item_uuid}
         Returns RenderQueueItem with .status, .frames_done, .frames_total
         """
-        return self.app.get_application_render_queue_item(render_uuid)
+        return self.app.get_application_render_queue_item(queue_item_uuid)
 
     def delete_render_shot(self, render_uuid, quiet=True):
         """

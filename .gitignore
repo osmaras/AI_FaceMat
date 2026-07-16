@@ -1,5 +1,7 @@
 # Temp clone directories from fork operations
 .tmp-*/
+.vscode/
+.agents/
 
 # Segface fork packaging files (not part of the app)
 segface-fork-files/
@@ -9,6 +11,11 @@ AGENTS.md
 
 # API docs (reference only, not part of the app)
 docs/
+.pre-commit-config.yaml
+ruff.toml
+skill-lock.json
+run_AIFaceMat.bat
+Ai_FaceMat.acc
 
 # Python
 __pycache__/

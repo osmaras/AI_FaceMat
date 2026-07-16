@@ -14,7 +14,7 @@ An AI-powered pipeline that automatically generates per-feature face mattes (Ski
 ### Prerequisites
 
 - **Windows 10/11** with NVIDIA GPU
-- **Assimilate Scratch** running locally (`http://127.0.0.1:8080`)
+- **Assimilate Scratch v9.9 build 1210+** running locally (`http://127.0.0.1:8080`)
 
 ### Steps
 
@@ -200,7 +200,7 @@ print(f"Shot: {shot_data.name}, Length: {shot_data.length}")
 |---------|--------|---------|
 | SegFace | [osmaras/SegFace](https://github.com/osmaras/SegFace) | Face semantic segmentation (ConvNeXt backbone) |
 | SAM 2 | [facebookresearch/sam2](https://github.com/facebookresearch/sam2) | Video object tracking + image predictor refinement |
-| assimilate_client | [Assimilate-Inc/Assimilate-REST](https://github.com/Assimilate-Inc/Assimilate-REST) | Scratch REST API SDK |
+| assimilate_client | [Assimilate-Inc/Assimilate-REST](https://github.com/Assimilate-Inc/Assimilate-REST) | Scratch REST API SDK (requires Assimilate Scratch v9.9 build 1210+) |
 | huggingface_hub | PyPI | Model checkpoint caching |
 
 PyTorch and torchvision versions are managed via `torch-versions.json` (single source of truth). The installer reads this file and patches `AI_FaceMat.py` accordingly. To update PyTorch, edit the JSON file only.

@@ -315,12 +315,12 @@ class RenderStage:
             )
             render_uuid = str(render_node.uuid)
             try:
-                queue_item = ctx.scratch.start_render(render_uuid, delete_existing_media=ctx.args.auto_clean)
+                queue_item = ctx.scratch.start_render(render_node.uuid, delete_existing_media=ctx.args.auto_clean)
                 print("  ↳ Rendering", end="", flush=True)
-                while queue_item.status in ("waiting", "processing"):
+                while queue_item.status in ("Idle", "waiting", "processing"):
                     time.sleep(1)
                     print(".", end="", flush=True)
-                    queue_item = ctx.scratch.poll_render(render_uuid)
+                    queue_item = ctx.scratch.poll_render(queue_item.uuid)
                 print()
                 if queue_item.status != "finished":
                     err_detail = getattr(queue_item, "error", None) or getattr(queue_item, "message", None)
