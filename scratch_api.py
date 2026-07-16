@@ -68,6 +68,10 @@ class ScratchAPI:
         proj = self.projects.get_projects_current()
         return proj.project_paths if proj and proj.project_paths else None
 
+    def get_current_construct(self):
+        """Current construct data (includes uuid). API: GET /constructs/current"""
+        return self.projects.get_constructs_current(level="ALL")
+
     # ---- RENDERING (Render Shot + Render Queue) ----
     # Tiff/PNG render shot type UUID (constant in Scratch)
     RENDER_SHOT_TYPE_UUID = "00000000-0000-0000-0000-000000000004"
@@ -155,6 +159,16 @@ class ScratchAPI:
         Returns RenderQueueItem with .status, .frames_done, .frames_total
         """
         return self.app.get_application_render_queue_item(queue_item_uuid)
+
+    def invalidate_render_media(self, queue_item_uuid):
+        """
+        Tell Scratch to release its file handles on rendered media.
+        Must be called before attempting to delete rendered files on Windows,
+        where Scratch holds locks on the output frames.
+        API: PUT /application/render/{queue_item_uuid}
+        """
+        body = assimilate_client.RenderQueueSettings(delete_existing_media=True)
+        return self.app.update_application_render_queue_item(body, queue_item_uuid)
 
     def delete_render_shot(self, render_uuid, quiet=True):
         """
@@ -260,6 +274,19 @@ class ScratchAPI:
         shot.name = name
         shot.file = media_path
         return self.projects.add_shot(shot)
+
+    def place_shot_in_version_slot(self, construct_uuid, slot_idx, version_idx, shot_uuid):
+        """
+        Place an existing shot into a specific version position within a slot.
+        API: PATCH /shot/{shot_uuid}
+        Body: MoveShotData { construct_uuid, slot_idx, version_idx, create_copy }
+        """
+        move_data = assimilate_client.MoveShotData()
+        move_data.construct_uuid = construct_uuid
+        move_data.slot_idx = slot_idx
+        move_data.version_idx = version_idx
+        move_data.create_copy = True
+        return self.projects.move_shot(move_data, shot_uuid)
 
     # ---- METADATA & NOTES ----
 

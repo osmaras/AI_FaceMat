@@ -20,9 +20,11 @@ import sys
 import time
 import argparse
 import shutil
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+from tqdm import tqdm
 import torch
 import torch.nn.functional as F
 import cv2
@@ -227,11 +229,15 @@ class PipelineContext:
     shot_data: object = None
     source_tc: str = "00:00:00:00"
     source_reel: str = "A001C001"
+    slot_idx: int = 0
+    construct_uuid: str = ""
     # Workspace paths (set by MetadataStage)
     pipeline_workspace: str = ""
     render_in: str = ""
     matte_dirs: dict = field(default_factory=dict)
     # Render output (set by RenderStage)
+    render_uuid: str = ""
+    render_queue_uuid: str = ""
     frame_list: list = field(default_factory=list)
     # SegFace output (set by SegFaceStage)
     h: int = 0
@@ -260,14 +266,17 @@ class MetadataStage:
         ctx.shot_name = shot_data.name or "VFX_Shot"
         ctx.frame_mapper = FrameMapper(shot_data)
 
-        slot_idx = int(getattr(selection, "slot_idx", 0) or 0)
-        slot_data = ctx.scratch.get_slot(slot_idx)
-        slot_length = int(getattr(slot_data, "length", 0) or 0)
-        ctx.shot_length = slot_length if slot_length > 0 else (shot_data.length or 1)
-        print(f"  ↳ Slot {slot_idx} length: {slot_length} | Shot media length: {shot_data.length}")
-
         ctx.source_tc = str(shot_data.timecode) if shot_data.timecode else "00:00:00:00"
         ctx.source_reel = shot_data.reel_id or "A001C001"
+
+        ctx.slot_idx = int(getattr(selection, "slot_idx", 0) or 0)
+        construct = ctx.scratch.get_current_construct()
+        ctx.construct_uuid = str(construct.uuid) if construct and hasattr(construct, "uuid") else ""
+
+        slot_data = ctx.scratch.get_slot(ctx.slot_idx)
+        slot_length = int(getattr(slot_data, "length", 0) or 0)
+        ctx.shot_length = slot_length if slot_length > 0 else (shot_data.length or 1)
+        print(f"  ↳ Slot {ctx.slot_idx} length: {slot_length} | Shot media length: {shot_data.length}")
 
         proj_paths = ctx.scratch.get_project_paths()
         if proj_paths and proj_paths.cache_path:
@@ -313,22 +322,25 @@ class RenderStage:
                 input_shot_uuid=ctx.shot_uuid,
                 file_format="jpg",
             )
-            render_uuid = str(render_node.uuid)
-            try:
-                queue_item = ctx.scratch.start_render(render_node.uuid, delete_existing_media=ctx.args.auto_clean)
-                print("  ↳ Rendering", end="", flush=True)
-                while queue_item.status in ("Idle", "waiting", "processing"):
-                    time.sleep(1)
-                    print(".", end="", flush=True)
-                    queue_item = ctx.scratch.poll_render(queue_item.uuid)
-                print()
-                if queue_item.status != "finished":
-                    err_detail = getattr(queue_item, "error", None) or getattr(queue_item, "message", None)
-                    print(f"❌ Render failed with status: {queue_item.status}"
-                          + (f" ({err_detail})" if err_detail else ""))
-                    sys.exit(1)
-            finally:
-                ctx.scratch.delete_render_shot(render_uuid)
+            ctx.render_uuid = str(render_node.uuid)
+            queue_item = ctx.scratch.start_render(render_node.uuid, delete_existing_media=ctx.args.auto_clean)
+            ctx.render_queue_uuid = str(queue_item.uuid)
+            total = int(getattr(queue_item, "frames_total", 0) or ctx.shot_length)
+            pbar = tqdm(total=total, desc="  Rendering", unit="frame")
+            done = 0
+            while queue_item.status in ("Idle", "waiting", "processing"):
+                time.sleep(0.5)
+                queue_item = ctx.scratch.poll_render(queue_item.uuid)
+                new_done = int(getattr(queue_item, "frames_done", 0) or 0)
+                if new_done > done:
+                    pbar.update(new_done - done)
+                    done = new_done
+            pbar.close()
+            if queue_item.status != "finished":
+                err_detail = getattr(queue_item, "error", None) or getattr(queue_item, "message", None)
+                print(f"❌ Render failed with status: {queue_item.status}"
+                      + (f" ({err_detail})" if err_detail else ""))
+                sys.exit(1)
 
         ctx.frame_list = sorted([f for f in os.listdir(ctx.render_in) if f.endswith('.jpg')])
         if not ctx.frame_list:
@@ -426,8 +438,19 @@ class SAM2Stage:
             video_name = os.path.basename(ctx.render_in)
             ctx.alpha_dirs[feature] = os.path.join(feature_out, video_name, "pha")
 
+        detected_features = [f for f in FEATURES if np.any(ctx.feature_masks[f])]
+        skipped = [f for f in FEATURES if f not in detected_features]
+        if skipped:
+            print(f"  ⚠️ Skipping undetected features: {', '.join(skipped)}")
+        if not detected_features:
+            print("  ⚠️ No features detected — skipping SAM2 tracking entirely")
+            return ctx
+
         print("🎬 Running SAM2 tracking...")
-        from sam2.build_sam import build_sam2_video_predictor
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*cannot import name.*_C.*")
+            warnings.filterwarnings("ignore", message=".*Skipping the post-processing.*")
+            from sam2.build_sam import build_sam2_video_predictor
 
         sam2_predictor = build_sam2_video_predictor(
             "configs/sam2.1/sam2.1_hiera_l.yaml", sam2_ckpt, device=device
@@ -435,37 +458,43 @@ class SAM2Stage:
 
         print("  🌀 SAM2: initializing tracking memory...")
         inference_state = sam2_predictor.init_state(video_path=ctx.render_in)
-        sam2_predictor.add_new_mask(inference_state=inference_state, frame_idx=0, obj_id=1, mask=ctx.feature_masks["Lips"])
-        sam2_predictor.add_new_mask(inference_state=inference_state, frame_idx=0, obj_id=2, mask=ctx.feature_masks["Skin"])
-        sam2_predictor.add_new_mask(inference_state=inference_state, frame_idx=0, obj_id=3, mask=ctx.feature_masks["Eyes"])
 
-        for feature in FEATURES:
+        feature_to_obj_id = {}
+        for obj_id, feature in enumerate(detected_features, start=1):
+            sam2_predictor.add_new_mask(
+                inference_state=inference_state, frame_idx=0,
+                obj_id=obj_id, mask=ctx.feature_masks[feature]
+            )
+            feature_to_obj_id[feature] = obj_id
+
+        for feature in detected_features:
             os.makedirs(ctx.alpha_dirs[feature], exist_ok=True)
 
         print("  Propagating...")
-        obj_id_to_feature = {1: "Lips", 2: "Skin", 3: "Eyes"}
-        frames_written = {f: 0 for f in FEATURES}
+        frames_written = {f: 0 for f in detected_features}
+        obj_id_to_feature = {v: k for k, v in feature_to_obj_id.items()}
         propagation_loop = sam2_predictor.propagate_in_video(inference_state)
 
-        for frame_idx, object_ids, mask_logits in propagation_loop:
-            actual_frame = ctx.frame_mapper.to_sequence(frame_idx)
-            for i, obj_id in enumerate(object_ids):
-                feature = obj_id_to_feature.get(obj_id)
-                if not feature:
-                    continue
-                raw = mask_logits[i]
-                matte = ((raw > 0.0).cpu().numpy() * 255).astype(np.uint8)
-                matte = matte.squeeze()
-                if matte.ndim != 2:
-                    print(f"    ⚠️ {feature} frame {actual_frame}: unexpected shape {matte.shape}, skipping")
-                    continue
-                out_path = os.path.join(ctx.alpha_dirs[feature], f"{actual_frame:05d}.png")
-                ok = cv2.imwrite(out_path, matte, [cv2.IMWRITE_PNG_COMPRESSION, 1])
-                if not ok:
-                    print(f"    ❌ cv2.imwrite FAILED: {out_path} (matte shape={matte.shape}, dtype={matte.dtype})")
-                elif frame_idx == 0:
-                    print(f"    {feature} frame {actual_frame}: shape={matte.shape}, nonzero={np.count_nonzero(matte)}, wrote={out_path}")
-                frames_written[feature] += 1
+        with open(os.devnull, "w") as devnull:
+            old_stdout = sys.stdout
+            sys.stdout = devnull
+            try:
+                for frame_idx, object_ids, mask_logits in propagation_loop:
+                    actual_frame = ctx.frame_mapper.to_sequence(frame_idx)
+                    for i, obj_id in enumerate(object_ids):
+                        feature = obj_id_to_feature.get(obj_id)
+                        if not feature:
+                            continue
+                        raw = mask_logits[i]
+                        matte = ((raw > 0.0).cpu().numpy() * 255).astype(np.uint8)
+                        matte = matte.squeeze()
+                        if matte.ndim != 2:
+                            continue
+                        out_path = os.path.join(ctx.alpha_dirs[feature], f"{actual_frame:05d}.png")
+                        cv2.imwrite(out_path, matte, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+                        frames_written[feature] += 1
+            finally:
+                sys.stdout = old_stdout
 
         for feat, count in frames_written.items():
             print(f"    {feat}: {count} frames written to {ctx.alpha_dirs[feat]}")
@@ -480,7 +509,11 @@ class SAM2Stage:
     def _combine_alphas(self, ctx: PipelineContext):
         print("  Combining alphas into multicolor canvas...")
         combined_dir = ctx.matte_dirs["Combined"]
-        ref_list = sorted(f for f in os.listdir(ctx.alpha_dirs["Skin"]) if f.endswith(".png"))
+        available_features = [f for f in FEATURES if os.path.isdir(ctx.alpha_dirs.get(f, "")) and os.listdir(ctx.alpha_dirs[f])]
+        if not available_features:
+            print("  ⚠️ No matte frames to combine")
+            return
+        ref_list = sorted(f for f in os.listdir(ctx.alpha_dirs[available_features[0]]) if f.endswith(".png"))
         color_map = {
             "Lips": np.array([0, 0, 255], dtype=np.uint8),   # BGR red
             "Skin": np.array([255, 0, 0], dtype=np.uint8),   # BGR blue
@@ -489,9 +522,10 @@ class SAM2Stage:
         combine_pool = ThreadPoolExecutor(max_workers=os.cpu_count())
         for fname in ref_list:
             canvas = np.zeros((ctx.h, ctx.w, 3), dtype=np.uint8)
-            for feat, color in color_map.items():
+            for feat in available_features:
                 a = cv2.imread(os.path.join(ctx.alpha_dirs[feat], fname), cv2.IMREAD_GRAYSCALE)
                 if a is not None:
+                    color = color_map[feat]
                     a3 = (a.astype(np.float32) / 255.0)[:, :, np.newaxis]
                     canvas = cv2.add(canvas, (color.reshape(1, 1, 3) * a3).astype(np.uint8))
             combine_pool.submit(cv2.imwrite, os.path.join(combined_dir, fname), canvas, [cv2.IMWRITE_PNG_COMPRESSION, 1])
@@ -509,6 +543,14 @@ class ConformStage:
 
         for feature in targets_to_load:
             media_path = ctx.alpha_dirs.get(feature, ctx.matte_dirs.get(feature))
+            if not media_path or not os.path.isdir(media_path):
+                print(f"  ⚠️ Skipping {feature}: matte directory not found")
+                continue
+            matte_files = [f for f in os.listdir(media_path) if f.lower().endswith((".png", ".jpg", ".tif"))]
+            if not matte_files:
+                print(f"  ⚠️ Skipping {feature}: no matte frames (feature not detected)")
+                continue
+
             label = f"AI_Matte_{feature}" if ctx.args.mode == "grayscale" else "AI_Clown_Pass_Matte"
             naming_suffix = f"{ctx.shot_name}_{feature}"
 
@@ -527,10 +569,10 @@ class ConformStage:
                 else:
                     print(f"  ⚠️ Failed to create layer '{label}'")
             else:
-                result = ctx.scratch.create_shot(label, media_path)
+                first_frame = os.path.join(media_path, matte_files[0])
+                result = ctx.scratch.create_shot(label, first_frame)
                 if result and hasattr(result, "uuid"):
                     new_uuid = str(result.uuid)
-                    print(f"  ✓ Shot '{label}' created [UUID: {new_uuid}]")
                     ctx.scratch.set_shot_properties(
                         new_uuid,
                         reel_id=ctx.source_reel,
@@ -538,6 +580,10 @@ class ConformStage:
                         frame_tc=matte_frame_tc,
                         name=naming_suffix
                     )
+                    ctx.scratch.place_shot_in_version_slot(
+                        ctx.construct_uuid, ctx.slot_idx, 1, new_uuid
+                    )
+                    print(f"  ✓ Shot '{label}' placed at version 1 in slot {ctx.slot_idx}")
                 else:
                     print(f"  ⚠️ Failed to create shot '{label}'")
         return ctx
@@ -550,8 +596,16 @@ class CleanupStage:
         if ctx.args.auto_clean:
             print("🧹 [--auto-clean] Removing rendered cache...")
             if os.path.exists(ctx.render_in):
+                if ctx.render_queue_uuid:
+                    try:
+                        ctx.scratch.invalidate_render_media(ctx.render_queue_uuid)
+                        print("  ✓ Released Scratch media handles")
+                    except Exception as e:
+                        print(f"  ⚠️ Could not invalidate render media: {e}")
                 shutil.rmtree(ctx.render_in)
                 print(f"  ✓ Purged: {ctx.render_in}")
+            if ctx.render_uuid:
+                ctx.scratch.delete_render_shot(ctx.render_uuid)
 
         note_text = (
             f"AI Face Matte Pipeline Completed.\n"
