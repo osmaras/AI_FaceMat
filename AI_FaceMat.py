@@ -340,6 +340,36 @@ class RenderStage:
 class SegFaceStage:
     """Stage 3: SegFace semantic parsing on keyframe (frame 0)."""
 
+    @staticmethod
+    def _patch_lapa_inference(model):
+        """Monkey-patch LaPa model to handle inference without landmarks."""
+        import types
+
+        original_forward = model.forward
+
+        def inference_forward(self, x, labels, dataset):
+            if labels is None or dataset is None:
+                self.multi_scale_features.clear()
+                features = self.backbone(x).squeeze()
+                batch_size = self.multi_scale_features[-1].shape[0]
+                all_hidden_states = ()
+                for encoder_hidden_state, mlp in zip(self.multi_scale_features, self.linear_c):
+                    height, width = encoder_hidden_state.shape[2], encoder_hidden_state.shape[3]
+                    encoder_hidden_state = mlp(encoder_hidden_state)
+                    encoder_hidden_state = encoder_hidden_state.permute(0, 2, 1)
+                    encoder_hidden_state = encoder_hidden_state.reshape(batch_size, -1, height, width)
+                    encoder_hidden_state = F.interpolate(
+                        encoder_hidden_state, size=self.multi_scale_features[0].size()[2:],
+                        mode="bilinear", align_corners=False
+                    )
+                    all_hidden_states += (encoder_hidden_state,)
+                fused_states = self.linear_fuse(torch.cat(all_hidden_states[::-1], dim=1))
+                image_pe = self.pe_layer((fused_states.shape[2], fused_states.shape[3])).unsqueeze(0)
+                return self.face_decoder(image_embeddings=fused_states, image_pe=image_pe)
+            return original_forward(x, labels, dataset)
+
+        model.forward = types.MethodType(inference_forward, model)
+
     def run(self, ctx: PipelineContext) -> PipelineContext:
         print("🧠 Initializing deep learning models on GPU...")
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -353,6 +383,9 @@ class SegFaceStage:
             backbone=segface_spec["backbone"],
             model_name=segface_spec["model"],
         )
+
+        if "lapa" in ctx.args.segface_model:
+            self._patch_lapa_inference(face_parser.model)
 
         sample_img = cv2.imread(os.path.join(ctx.render_in, ctx.frame_list[0]))
         ctx.h, ctx.w, _ = sample_img.shape
